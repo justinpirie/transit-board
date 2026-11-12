@@ -213,6 +213,22 @@ async def schedule_endpoint(agency: str, stop: str, day: str | None = None, afte
     return {"date": d.isoformat(), "count": len(deps), "departures": out[:limit]}
 
 
+@app.get("/line_stops")
+async def line_stops_endpoint(agency: str, line: str, q: str = "", day: str | None = None):
+    """Debug: stops a line serves per the GTFS timetable (no API calls once cached).
+    e.g. ?agency=AC&line=W&q=central"""
+    store = getattr(app.state, "schedule", None)
+    if store is None:
+        raise HTTPException(503, "only available when running inside Home Assistant")
+    import asyncio, zipfile
+    from .schedule import line_stops
+    path = await store._ensure_feed(agency)
+    if not path:
+        raise HTTPException(502, f"no GTFS for {agency}")
+    d = datetime.fromisoformat(day).date() if day else app.state.poller.local_now().date()
+    return await asyncio.to_thread(lambda: line_stops(zipfile.ZipFile(path), line, d, q))
+
+
 @app.get("/peek")
 async def peek(agency: str, stop: str):
     """Live departures at any stop, unfiltered, for checking a stop code by hand."""

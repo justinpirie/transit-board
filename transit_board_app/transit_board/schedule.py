@@ -149,3 +149,35 @@ class ScheduleStore:
             del self._index[key]
             return await self.departures(agency, stops, day)
         return cached
+
+
+def line_stops(z: zipfile.ZipFile, line: str, day: date, query: str = "") -> list[dict]:
+    """Every stop `line` serves on `day` (route short or long name), with each
+    stop's headsigns and first/last times. For finding stop codes from the
+    timetable, with no API calls."""
+    services = active_services(z, day)
+    routes = {r["route_id"] for r in _rows(z, "routes.txt")
+              if line in (r.get("route_short_name"), r.get("route_long_name"), r["route_id"])}
+    trips = {r["trip_id"]: r.get("trip_headsign") or "" for r in _rows(z, "trips.txt")
+             if r["route_id"] in routes and r["service_id"] in services}
+    agg: dict[str, dict] = {}
+    for r in _rows(z, "stop_times.txt"):
+        if r["trip_id"] not in trips:
+            continue
+        t = r.get("departure_time") or r.get("arrival_time") or ""
+        a = agg.setdefault(r["stop_id"], {"stop": r["stop_id"], "trips": 0, "first": t, "last": t,
+                                          "headsigns": set()})
+        a["trips"] += 1
+        if t:
+            a["first"] = min(a["first"] or t, t)
+            a["last"] = max(a["last"], t)
+        if trips[r["trip_id"]]:
+            a["headsigns"].add(trips[r["trip_id"]])
+    names = {r["stop_id"]: r.get("stop_name", "") for r in _rows(z, "stops.txt") if r["stop_id"] in agg}
+    words = query.lower().split()
+    out = []
+    for a in agg.values():
+        a["name"] = names.get(a["stop"], "")
+        if all(w in a["name"].lower() for w in words):
+            out.append({**a, "headsigns": sorted(a["headsigns"])})
+    return sorted(out, key=lambda a: a["name"])

@@ -734,3 +734,20 @@ def test_gtfs_terminal_skips_arrivals_and_fills_missing_headsign(tmp_path):
     ferry = _option({"name": "Ferry", "mode": "ferry", "priority": 1, "agency": "SB", "stop": "DOCK",
                      "dest_match": ["San Francisco", "Ferry Building"]})
     assert ferry.accepts(deps[0])                                  # the filter that silently failed before
+
+
+def test_line_stops_lists_a_lines_stops(tmp_path):
+    from transit_board.schedule import line_stops
+    p = gtfs_zip(tmp_path / "ac.zip",
+        stop_times=[{"trip_id": "w1", "arrival_time": "07:10:00", "departure_time": "07:10:00", "stop_id": "A", "stop_sequence": 1},
+                    {"trip_id": "w1", "arrival_time": "07:50:00", "departure_time": "07:50:00", "stop_id": "B", "stop_sequence": 2},
+                    {"trip_id": "x1", "arrival_time": "07:15:00", "departure_time": "07:15:00", "stop_id": "C", "stop_sequence": 1}],
+        trips=[{"trip_id": "w1", "route_id": "rW", "service_id": "WK", "trip_headsign": "San Francisco"},
+               {"trip_id": "x1", "route_id": "rX", "service_id": "WK", "trip_headsign": "Elsewhere"}],
+        routes=[{"route_id": "rW", "route_short_name": "W", "route_long_name": "Broadway"},
+                {"route_id": "rX", "route_short_name": "X", "route_long_name": "Other"}],
+        calendar=CAL_ALL)
+    with _zip.ZipFile(p, "a") as z:
+        z.writestr("stops.txt", "stop_id,stop_name\nA,Central Av & 8th St\nB,Transit Center Bay 22\nC,Central Av & 9th St\n")
+    r = line_stops(_zip.ZipFile(p), "W", WED, "central")
+    assert [(s["stop"], s["name"], s["headsigns"]) for s in r] == [("A", "Central Av & 8th St", ["San Francisco"])]
