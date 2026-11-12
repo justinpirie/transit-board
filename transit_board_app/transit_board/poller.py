@@ -202,8 +202,10 @@ class Poller:
             if leave_in < 0:
                 continue                      # can't make it
             eta = a["arrival_ts"] + (opt.ride_minutes + opt.egress_minutes) * 60
+            leave_ts = a["arrival_ts"] - (opt.travel_minutes + opt.buffer_minutes) * 60
             out.append({"line": a["line"], "dest": a["dest"], "mins": mins,
-                        "leave_in": leave_in, "realtime": a["realtime"],
+                        "leave_in": leave_in, "leave_at": self._iso(leave_ts),
+                        "realtime": a["realtime"],
                         "depart": self._iso(a["arrival_ts"]), "eta": self._iso(eta),
                         "_eta_ts": eta})
         return sorted(out, key=lambda d: d["leave_in"])
@@ -234,7 +236,9 @@ class Poller:
             options.append({"option": opt.name, "mode": opt.mode, "priority": opt.priority,
                             "fallback": opt.fallback, "always_prefer": opt.always_prefer,
                             "next": deps[pick_i] if deps else None,
-                            "later": [d["leave_in"] for d in deps[pick_i + 1:pick_i + 3]]})
+                            "later": [d["leave_in"] for d in deps[pick_i + 1:pick_i + 3]],
+                            # Same departures as clock times to leave ("08:12"), for display
+                            "later_at": [d["leave_at"][11:16] for d in deps[pick_i + 1:pick_i + 3]]})
 
         rec, reason = self._recommend(options, deadline)
         # Backup = what the same logic would pick if the recommendation vanished

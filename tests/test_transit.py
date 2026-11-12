@@ -870,3 +870,13 @@ def test_default_deadline_matches_night_before_targets():
     assert default_deadline(cfg, "to_office", at(7, 0)) == at(9, 30)
     assert default_deadline(cfg, "to_home", at(16, 0)) == at(18, 30)
     assert default_deadline(cfg, "to_office", at(10, 0)) is None      # already past: no deadline
+
+
+async def test_leave_at_and_later_at_are_clock_times():
+    # T0 = 08:00. O departures at +15, +30, +45; travel 5 + buffer 2 → leave 08:08, 08:23, 08:38
+    p = Poller(make_cfg(), clock=FakeClock(T0 + 30),       # 30 s past the minute: minutes round down,
+               client=mock_511({"O": siri([dep("O", 15), dep("O", 30), dep("O", 45)])}))  # times don't
+    await p.refresh("to_office")
+    o = next(x for x in p.plan("to_office")["options"] if x["option"] == "O bus")
+    assert o["next"]["leave_at"][11:16] == "08:08" and o["next"]["leave_in"] == 7
+    assert o["later_at"] == ["08:23", "08:38"]
