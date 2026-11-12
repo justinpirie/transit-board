@@ -27,6 +27,9 @@ from .poller import Poller, fetch_stop_monitoring
 from .setup import find_line, setup_report
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+# httpx logs every request URL at INFO, and 511 takes the API key as a query
+# parameter, so INFO would write the token into the app log. Keep it at WARNING.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 @asynccontextmanager
