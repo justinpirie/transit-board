@@ -1,0 +1,128 @@
+"""
+HTTP API.
+
+    GET /next
+        ?direction=to_home         force a direction
+        &at=home                   HA person state (slugified): picks direction,
+                                   and pauses background polling once you've left
+        &commute=off               calendar/toggle says no commute today → stop polling
+        &arrive_by=2026-11-12T09:30  calendar: recommend options that arrive on time
+    GET /health
+
+All hint params are optional; without them the service falls back to
+commute windows and time of day.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+from datetime import datetime
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse, PlainTextResponse
+
+from .config import load_config
+from .poller import Poller, fetch_stop_monitoring
+from .setup import setup_report
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    poller = Poller(load_config())
+    app.state.poller = poller
+    task = asyncio.create_task(poller.run_forever())
+    yield
+    task.cancel()
+    await poller.client.aclose()
+
+
+app = FastAPI(title="transit-board", lifespan=lifespan)
+
+
+def _bool(s: str | None) -> bool | None:
+    if s is None or s == "":
+        return None
+    return s.lower() in ("1", "on", "true", "yes")
+
+
+def _when(s: str | None, tz) -> datetime | None:
+    """Parse arrive_by. Accepts HA's calendar format ('2026-11-12 09:30:00',
+    naive local) or ISO with offset. Junk/empty → None (no deadline)."""
+    if not s or s.lower() in ("none", "unknown", "unavailable"):
+        return None
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=tz)
+
+
+@app.get("/next")
+async def next_departures(direction: str | None = None, at: str | None = None,
+                          commute: str | None = None, arrive_by: str | None = None):
+    p: Poller = app.state.poller
+    at = (at or "").strip().lower().replace(" ", "_") or None
+    p.set_hint(at, _bool(commute))
+
+    now = p.local_now()
+    direction, source = p.cfg.resolve_direction(now, direction, at)
+    if direction not in p.cfg.directions:
+        raise HTTPException(404, f"unknown direction {direction!r}; have {sorted(p.cfg.directions)}")
+
+    # A deadline only makes sense if it's in the future and today-ish
+    deadline = _when(arrive_by, p.cfg.tz)
+    if deadline and not (0 < (deadline - now).total_seconds() < 6 * 3600):
+        deadline = None
+
+    # Lazy refresh outside windows; inside, the background loop already did the work
+    in_window = p.cfg.active_window(now) is not None
+    if p.should_poll(direction) or not in_window:
+        await p.refresh(direction, lazy=not in_window)
+    return {**p.plan(direction, deadline), "direction_source": source}
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    """Landing page for the HA sidebar panel (ingress). Links are relative
+    because ingress serves the app under /api/hassio_ingress/<token>/."""
+    return """<!doctype html><meta name=viewport content="width=device-width">
+<body style="font-family:system-ui;padding:16px;max-width:640px">
+<h2>Transit Board</h2><ul>
+<li><a href="next">next</a>: current plan (JSON)</li>
+<li><a href="setup">setup</a>: find stop codes for options still marked TODO</li>
+<li><a href="health">health</a>: rate budget and status</li></ul></body>"""
+
+
+@app.get("/setup", response_class=PlainTextResponse)
+async def setup():
+    """Find stop codes for options still marked TODO. See setup.py."""
+    p: Poller = app.state.poller
+    return await setup_report(p.cfg, p.client, p.limiter)
+
+
+@app.get("/peek")
+async def peek(agency: str, stop: str):
+    """Live departures at any stop, unfiltered, for checking a stop code by hand."""
+    p: Poller = app.state.poller
+    if not p.limiter.try_acquire():
+        raise HTTPException(429, "rate budget exhausted")
+    arrivals = await fetch_stop_monitoring(p.client, p.cfg.api_key, agency, stop)
+    now = p.clock()
+    return sorted(({"line": a["line"], "dest": a["dest"], "realtime": a["realtime"],
+                    "mins": int((a["arrival_ts"] - now) // 60)} for a in arrivals),
+                  key=lambda a: a["mins"])
+
+
+@app.get("/health")
+async def health():
+    p: Poller = app.state.poller
+    w = p.cfg.active_window(p.local_now())
+    return {"ok": True, "budget_used_last_hour": p.limiter.used,
+            "budget_per_hour": p.cfg.request_budget_per_hour,
+            "active_window": w.direction if w else None,
+            "calls_per_hour": {d: round(p.cfg.calls_per_hour(d), 1) for d in p.cfg.directions},
+            "options_missing_stop_codes": [f"{d}/{o.name}" for d, o in p.cfg.pending],
+            "hint": vars(p.hint)}

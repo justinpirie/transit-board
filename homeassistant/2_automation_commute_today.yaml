@@ -1,0 +1,46 @@
+# ─── Set "Commute today" from the calendar each weekday morning ───────────
+# UI: Automations → Create → Edit in YAML. (Or have Claude create it via the API.)
+# You can still flip input_boolean.commute_today by hand on the dashboard; this
+# just sets the default at 5:45am.
+#
+# OFF when: it's a public holiday (Holiday integration), or your work calendar
+# has an event today titled WFH / OOO / Out of office / Vacation / PTO.
+# Google Workspace "Working location: Home" also syncs as an all-day event
+# named "Home", which matches below.
+
+alias: Commute – set commute_today from calendar
+description: Weekday 05:45, turn commute_today off on holidays/WFH/OOO, on otherwise.
+mode: single
+triggers:
+  - trigger: time
+    at: "05:45:00"
+conditions:
+  - condition: time
+    weekday: [mon, tue, wed, thu, fri]
+actions:
+  - action: calendar.get_events
+    target:
+      entity_id:
+        - calendar.work                     # TODO: your work calendar
+        - calendar.united_states_ca         # TODO: your Holiday integration calendar
+    data:
+      start_date_time: "{{ today_at('00:00') }}"
+      end_date_time: "{{ today_at('23:59') }}"
+    response_variable: cal
+  - variables:
+      holiday: "{{ cal['calendar.united_states_ca'].events | count > 0 }}"
+      wfh: >
+        {{ cal['calendar.work'].events | map(attribute='summary')
+           | select('search', '^(home)$|\\bwfh\\b|\\booo\\b|out of office|vacation|\\bpto\\b', ignorecase=True)
+           | list | count > 0 }}
+  - if:
+      - condition: template
+        value_template: "{{ holiday or wfh }}"
+    then:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.commute_today
+    else:
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.commute_today

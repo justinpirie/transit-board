@@ -1,0 +1,144 @@
+# transit-board commute config.
+# Lives at /homeassistant/transit_board/config.yaml (the File editor app can
+# open it). Restart the Transit Board app after editing.
+# The 511 API key is NOT here: set it in the app's Configuration tab.
+#
+# stop: "TODO" options are skipped (not polled) until filled in.
+# Open http://<your HA IP>:8099/setup to find codes; it uses each stop_query.
+
+timezone: America/Los_Angeles
+request_budget_per_hour: 50   # 511 default limit is 60/hr
+slack_minutes: 15             # ferry wins unless it arrives >15 min after the fastest option
+idle_ttl_seconds: 600
+switch_hour: 12
+
+location_directions:
+  home: to_office
+  # office: to_home           # uncomment after creating zone.office in HA
+
+# Buffers (be at the stop before departure): ferry/BART 3 min, bus 2 min (mode defaults).
+# Office-side walk times are estimates from the office. Adjust after a week.
+directions:
+  to_office:
+    - name: Ferry
+      mode: ferry
+      priority: 1
+      agency: SB
+      stop: "TODO"
+      stop_query: "seaplane"
+      dest_match: ["San Francisco", "Ferry Building"]
+      travel_minutes: 8         # TODO: bike home → Seaplane Lagoon terminal
+      ride_minutes: 20
+      egress_minutes: 15        # Ferry Building → office on foot
+
+    - name: O bus
+      mode: bus
+      priority: 2
+      agency: AC
+      stop: "TODO"
+      stop_query: "santa clara bay"
+      lines: [O]
+      dest_match: ["San Francisco", "Transit", "Transbay"]
+      travel_minutes: 13        # bike
+      ride_minutes: 35
+      egress_minutes: 10        # Salesforce Transit Center bus deck → office
+
+    - name: W bus
+      mode: bus
+      priority: 2
+      agency: AC
+      stop: "TODO"
+      stop_query: "central 9th"
+      lines: [W]
+      dest_match: ["San Francisco", "Transit", "Transbay"]
+      travel_minutes: 5         # bike
+      ride_minutes: 35
+      egress_minutes: 10
+
+    - name: BART (Fruitvale)
+      mode: bart
+      priority: 3
+      agency: BA
+      stop: "TODO"
+      stop_query: "fruitvale"
+      dest_match: ["Daly City", "SFO", "Millbrae", "Airport"]   # SF-bound only
+      travel_minutes: 22        # bike
+      ride_minutes: 16
+      egress_minutes: 5         # Montgomery platform → office
+
+    - name: Uber → West Oakland BART
+      mode: bart
+      priority: 4
+      agency: BA
+      stop: "TODO"
+      stop_query: "west oakland"
+      dest_match: ["Daly City", "SFO", "Millbrae", "Airport"]
+      travel_minutes: 20        # Uber wait + drive; leave_in = "request Uber in N min"
+      ride_minutes: 8
+      egress_minutes: 5
+
+  to_home:
+    - name: Ferry
+      mode: ferry
+      priority: 1
+      agency: SB
+      stop: "TODO"
+      stop_query: "ferry building"
+      dest_match: ["Seaplane", "Alameda"]
+      travel_minutes: 15        # office → Ferry Building
+      ride_minutes: 20
+      egress_minutes: 8         # TODO: bike terminal → home (same as morning)
+
+    - name: O bus
+      mode: bus
+      priority: 2
+      agency: AC
+      stop: "TODO"
+      stop_query: "transit center"
+      lines: [O]
+      travel_minutes: 10
+      ride_minutes: 35
+      egress_minutes: 13        # bike home
+
+    - name: W bus
+      mode: bus
+      priority: 2
+      agency: AC
+      stop: "TODO"
+      stop_query: "transit center"
+      lines: [W]
+      travel_minutes: 10
+      ride_minutes: 35
+      egress_minutes: 5         # bike home
+
+    - name: BART (→ Fruitvale)
+      mode: bart
+      priority: 3
+      agency: BA
+      stop: "TODO"
+      stop_query: "montgomery"
+      dest_match: ["Berryessa", "Dublin"]   # only these lines stop at Fruitvale
+      travel_minutes: 5
+      ride_minutes: 16
+      egress_minutes: 22        # bike home
+
+    - name: BART → West Oakland + Uber
+      mode: bart
+      priority: 4
+      agency: BA
+      stop: "TODO"
+      stop_query: "montgomery"
+      dest_match: ["Antioch", "Richmond", "Berryessa", "Dublin", "Pittsburg"]
+      travel_minutes: 5
+      ride_minutes: 8
+      egress_minutes: 20        # Uber wait + drive home
+
+windows:
+  - direction: to_office
+    days: [mon, tue, wed, thu, fri]
+    start: "07:00"
+    end: "10:00"
+  - direction: to_home
+    days: [mon, tue, wed, thu, fri]
+    start: "16:30"
+    end: "19:30"

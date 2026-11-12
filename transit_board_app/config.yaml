@@ -1,0 +1,38 @@
+# Home Assistant app manifest (this is NOT the commute config; see default_config.yaml)
+name: Transit Board
+version: "0.4.0"
+slug: transit_board
+description: Real-time Bay Area commute planner (511.org) for Home Assistant
+url: https://github.com/justinpirie/transit-board
+arch:
+  - aarch64     # Home Assistant Yellow / Raspberry Pi
+  - amd64
+init: false
+startup: application
+boot: auto
+# Host port 8099. HA Core on HA OS uses host networking, so the REST sensor
+# reaches it at http://127.0.0.1:8099 however the app was installed.
+# Also lets you open http://<HA IP>:8099/setup in a browser on your LAN.
+# Ingress: HA proxies the app behind its own login, so it works remotely via
+# Nabu Casa (sidebar panel) and lets tools call /setup without LAN access.
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:ferry
+panel_title: Commute
+ports:
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: Transit Board API (/next, /setup, /health)
+map:
+  - homeassistant_config:rw   # commute config lives in /homeassistant/transit_board/
+options:
+  api_key: ""
+  # Override any config value without editing files, one per line:
+  #   to_office/Ferry.stop=12345
+  #   to_office/Ferry.travel_minutes=10
+  #   slack_minutes=10
+  overrides: []
+schema:
+  api_key: password
+  overrides:
+    - str

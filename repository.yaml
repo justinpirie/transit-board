@@ -1,0 +1,5 @@
+# Lets Home Assistant install the app straight from this repo:
+# Settings → Apps → App store → ⋮ → Repositories → add the repo URL
+name: Transit Board
+url: https://github.com/justinpirie/transit-board
+maintainer: justinpirie
