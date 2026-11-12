@@ -58,19 +58,39 @@ def departures_from_zip(z: zipfile.ZipFile, stops: set[str], day: date, tz) -> d
              for r in _rows(z, "trips.txt") if r["service_id"] in services}
     midnight = datetime(day.year, day.month, day.day, tzinfo=tz)
 
-    out: dict[str, list[dict]] = {s: [] for s in stops}
-    for r in _rows(z, "stop_times.txt"):            # the big file: stream it, keep our stops only
-        if r["stop_id"] not in stops or r["trip_id"] not in trips:
+    # One pass over the big file. For every running trip, remember its LAST
+    # stop: at a terminal (e.g. a ferry dock) the timetable lists both
+    # departures and arrivals, and a trip whose final stop is ours is an
+    # arrival you can't board. Some feeds (SF Bay Ferry) also omit
+    # trip_headsign, so the last stop's name becomes the destination.
+    last: dict[str, tuple[int, str]] = {}
+    ours: list[tuple[str, int, str, str]] = []
+    for r in _rows(z, "stop_times.txt"):
+        tid = r["trip_id"]
+        if tid not in trips:
             continue
-        t = r.get("departure_time") or r.get("arrival_time")
-        if not t:
-            continue                                  # non-timepoint rows may be blank in some feeds
+        seq = int(r["stop_sequence"])
+        if tid not in last or seq > last[tid][0]:
+            last[tid] = (seq, r["stop_id"])
+        if r["stop_id"] in stops:
+            t = r.get("departure_time") or r.get("arrival_time")
+            if t:                                     # non-timepoint rows may be blank in some feeds
+                ours.append((tid, seq, r["stop_id"], t))
+
+    need_names = {last[tid][1] for tid, *_ in ours if not trips[tid][1]}
+    names = ({r["stop_id"]: r.get("stop_name", "") for r in _rows(z, "stops.txt")
+              if r["stop_id"] in need_names} if need_names else {})
+
+    out: dict[str, list[dict]] = {s: [] for s in stops}
+    for tid, seq, stop, t in ours:
+        if last[tid][0] == seq:
+            continue                                  # trip ends here: an arrival, not a departure
         h, m, s = (int(x) for x in t.split(":"))    # GTFS allows 24:xx+ for after-midnight trips
-        line, headsign = trips[r["trip_id"]]
-        out[r["stop_id"]].append({
-            "line": line, "line_ref": line, "dest": headsign,
+        line, headsign = trips[tid]
+        out[stop].append({
+            "line": line, "line_ref": line, "dest": headsign or names.get(last[tid][1], ""),
             "arrival_ts": (midnight + timedelta(hours=h, minutes=m, seconds=s)).timestamp(),
-            "realtime": False, "stop_name": None, "stop_ref": r["stop_id"],
+            "realtime": False, "stop_name": None, "stop_ref": stop,
         })
     for v in out.values():
         v.sort(key=lambda a: a["arrival_ts"])

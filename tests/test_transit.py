@@ -579,10 +579,12 @@ CAL_ALL = [{"service_id": "WK", "monday": 1, "tuesday": 1, "wednesday": 1, "thur
 def test_gtfs_services_exceptions_and_after_midnight(tmp_path):
     from transit_board.schedule import active_services, departures_from_zip
     p = gtfs_zip(tmp_path / "f.zip",
-        stop_times=[{"trip_id": "t1", "arrival_time": "08:10:00", "departure_time": "08:12:00", "stop_id": "S1"},
-                    {"trip_id": "t2", "arrival_time": "25:05:00", "departure_time": "25:05:00", "stop_id": "S1"},
-                    {"trip_id": "t3", "arrival_time": "09:00:00", "departure_time": "09:00:00", "stop_id": "S1"},
-                    {"trip_id": "t1", "arrival_time": "08:30:00", "departure_time": "08:30:00", "stop_id": "OTHER"}],
+        stop_times=[{"trip_id": "t1", "arrival_time": "08:10:00", "departure_time": "08:12:00", "stop_id": "S1", "stop_sequence": 1},
+                    {"trip_id": "t2", "arrival_time": "25:05:00", "departure_time": "25:05:00", "stop_id": "S1", "stop_sequence": 1},
+                    {"trip_id": "t3", "arrival_time": "09:00:00", "departure_time": "09:00:00", "stop_id": "S1", "stop_sequence": 1},
+                    {"trip_id": "t1", "arrival_time": "08:30:00", "departure_time": "08:30:00", "stop_id": "OTHER", "stop_sequence": 2},
+                    {"trip_id": "t2", "arrival_time": "25:30:00", "departure_time": "25:30:00", "stop_id": "OTHER", "stop_sequence": 2},
+                    {"trip_id": "t3", "arrival_time": "09:30:00", "departure_time": "09:30:00", "stop_id": "OTHER", "stop_sequence": 2}],
         trips=[{"trip_id": "t1", "route_id": "r1", "service_id": "WK", "trip_headsign": "San Francisco"},
                {"trip_id": "t2", "route_id": "r1", "service_id": "WK", "trip_headsign": "Owl"},
                {"trip_id": "t3", "route_id": "r1", "service_id": "HOL", "trip_headsign": "Holiday only"}],
@@ -694,7 +696,8 @@ async def test_build_tomorrow_day_off_and_payload():
 async def test_schedule_store_downloads_once_and_caches(tmp_path):
     from transit_board.schedule import ScheduleStore
     src = gtfs_zip(tmp_path / "src.zip",
-        stop_times=[{"trip_id": "t1", "arrival_time": "08:00:00", "departure_time": "08:00:00", "stop_id": "7207"}],
+        stop_times=[{"trip_id": "t1", "arrival_time": "08:00:00", "departure_time": "08:00:00", "stop_id": "7207", "stop_sequence": 1},
+                    {"trip_id": "t1", "arrival_time": "08:20:00", "departure_time": "08:20:00", "stop_id": "SFFB", "stop_sequence": 2}],
         trips=[{"trip_id": "t1", "route_id": "SEA", "service_id": "WK", "trip_headsign": "San Francisco Ferry Building"}],
         routes=[{"route_id": "SEA", "route_short_name": "", "route_long_name": "Alameda Seaplane"}],
         calendar=CAL_ALL)
@@ -708,3 +711,26 @@ async def test_schedule_store_downloads_once_and_caches(tmp_path):
     d2 = await store.departures("SB", {"7207"}, WED)
     assert calls == ["SB"]                                         # one download, then cache
     assert d1 == d2 and d1["7207"][0]["line"] == "Alameda Seaplane"
+
+
+def test_gtfs_terminal_skips_arrivals_and_fills_missing_headsign(tmp_path):
+    """Ferry-dock shape: the dock is the first stop of outbound trips and the last stop
+    of inbound ones, and the feed has no trip_headsign (as SF Bay Ferry's doesn't)."""
+    from transit_board.schedule import departures_from_zip
+    p = gtfs_zip(tmp_path / "ferry.zip",
+        stop_times=[{"trip_id": "out", "arrival_time": "07:00:00", "departure_time": "07:00:00", "stop_id": "DOCK", "stop_sequence": 1},
+                    {"trip_id": "out", "arrival_time": "07:20:00", "departure_time": "07:20:00", "stop_id": "SFFB", "stop_sequence": 2},
+                    {"trip_id": "in", "arrival_time": "07:40:00", "departure_time": "07:40:00", "stop_id": "SFFB", "stop_sequence": 1},
+                    {"trip_id": "in", "arrival_time": "08:00:00", "departure_time": "08:00:00", "stop_id": "DOCK", "stop_sequence": 2}],
+        trips=[{"trip_id": "out", "route_id": "SEA", "service_id": "WK", "trip_headsign": ""},
+               {"trip_id": "in", "route_id": "SEA", "service_id": "WK", "trip_headsign": ""}],
+        routes=[{"route_id": "SEA", "route_short_name": "SEA", "route_long_name": "Alameda Seaplane"}],
+        calendar=CAL_ALL)
+    with _zip.ZipFile(p, "a") as z:
+        z.writestr("stops.txt", "stop_id,stop_name\nDOCK,Alameda Seaplane Lagoon\nSFFB,San Francisco Ferry Building Gate F\n")
+    deps = departures_from_zip(_zip.ZipFile(p), {"DOCK"}, WED, TZ)["DOCK"]
+    assert len(deps) == 1                                          # the 08:00 arrival is gone
+    assert deps[0]["dest"] == "San Francisco Ferry Building Gate F"
+    ferry = _option({"name": "Ferry", "mode": "ferry", "priority": 1, "agency": "SB", "stop": "DOCK",
+                     "dest_match": ["San Francisco", "Ferry Building"]})
+    assert ferry.accepts(deps[0])                                  # the filter that silently failed before
