@@ -143,12 +143,12 @@ def test_shipped_config_yaml_loads(monkeypatch):
     # Shipped config has every stop resolved: nothing pending, all 12 options polled
     assert cfg.pending == [] and sum(len(v) for v in cfg.directions.values()) == 12
     office = {o.name: o for o in cfg.directions["to_office"]}
-    assert list(office)[0] == "Ferry" and office["Ferry"].stop == "7207"
+    assert list(office)[0] == "Seaplane Ferry" and office["Seaplane Ferry"].stop == "7207"
     assert (office["O bus"].buffer_minutes, office["O bus"].travel_minutes) == (2, 13)
     assert office["Uber → West Oakland BART"].fallback
-    assert office["Ferry"].always_prefer and not office["Harbor Bay ferry"].always_prefer
+    assert office["Seaplane Ferry"].always_prefer and not office["Harbor Bay ferry"].always_prefer
     assert [o.name for o in cfg.directions["to_office"]] == [
-        "Ferry", "O bus", "W bus", "Harbor Bay ferry", "BART (Fruitvale)", "Uber → West Oakland BART"]
+        "Seaplane Ferry", "O bus", "W bus", "Harbor Bay ferry", "BART (Fruitvale)", "Uber → West Oakland BART"]
     assert office["Harbor Bay ferry"].travel_minutes == 27
     assert cfg.location_directions == {"home": "to_office", "office": "to_home"}
     assert (cfg.default_arrive_by, cfg.default_home_by) == ("09:30", "17:05")
@@ -345,8 +345,8 @@ def test_overrides_set_stop_codes_and_times(monkeypatch):
     import json as _json
     monkeypatch.setenv("API_KEY_511", "x")
     monkeypatch.setenv("TRANSIT_OVERRIDES", _json.dumps([
-        "to_office/Ferry.stop=12345",
-        "to_office/Ferry.travel_minutes=10",
+        "to_office/Seaplane Ferry.stop=12345",
+        "to_office/Seaplane Ferry.travel_minutes=10",
         "to_office/O bus.lines=O, OX",
         "slack_minutes=10",
         "to_office/Nope.stop=1",          # bad: unknown option → logged, ignored
@@ -354,7 +354,7 @@ def test_overrides_set_stop_codes_and_times(monkeypatch):
     ]))
     cfg = load_config(os.path.join(os.path.dirname(__file__), "..", "transit_board_app", "default_config.yaml"))
     office = {o.name: o for o in cfg.directions["to_office"]}
-    ferry = office["Ferry"]
+    ferry = office["Seaplane Ferry"]
     assert (ferry.stop, ferry.travel_minutes, ferry.buffer_minutes) == ("12345", 10, 3)
     assert cfg.slack_minutes == 10
     assert office["O bus"].lines == ("O", "OX")
@@ -797,22 +797,23 @@ def test_clone_override_adds_an_option(monkeypatch):
     import json as _json
     monkeypatch.setenv("API_KEY_511", "x")
     monkeypatch.setenv("TRANSIT_OVERRIDES", _json.dumps([
-        "to_office/Harbor Bay ferry.clone=Ferry",
+        "to_office/Harbor Bay ferry.clone=Seaplane Ferry",
         "to_office/Harbor Bay ferry.stop=7206",
         "to_office/Harbor Bay ferry.priority=3",
         "to_office/BART (Fruitvale).priority=4",
         "to_office/Uber → West Oakland BART.priority=5",
         "to_office/Harbor Bay ferry.travel_minutes=27",
-        "to_office/Ferry.always_prefer=true",
-        "to_office/Harbor Bay ferry.clone=Nope",          # bad source → logged, ignored
+        "to_office/Seaplane Ferry.always_prefer=true",
+        "to_office/Harbor Bay ferry.clone=Nope",
+        "to_office/Seaplane Ferry.name=Seaplane",          # rename, applied in order          # bad source → logged, ignored
     ]))
     cfg = load_config(os.path.join(os.path.dirname(__file__), "..", "transit_board_app", "default_config.yaml"))
     office = {o.name: o for o in cfg.directions["to_office"]}
     hb = office["Harbor Bay ferry"]
     assert (hb.stop, hb.priority, hb.travel_minutes, hb.mode, hb.buffer_minutes) == ("7206", 3, 27, "ferry", 3)
-    assert not hb.always_prefer and office["Ferry"].always_prefer   # clone doesn't inherit the flag
+    assert not hb.always_prefer and office["Seaplane"].always_prefer   # clone doesn't inherit the flag
     assert [o.name for o in cfg.directions["to_office"]] == [
-        "Ferry", "O bus", "W bus", "Harbor Bay ferry", "BART (Fruitvale)", "Uber → West Oakland BART"]
+        "Seaplane", "O bus", "W bus", "Harbor Bay ferry", "BART (Fruitvale)", "Uber → West Oakland BART"]
 
 
 # ─── Regression: 2026-11-12 morning, "leave now" fired for the 7:00 ferry ──

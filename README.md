@@ -91,11 +91,12 @@ Each option's *next catchable* departure gets
 ### Changing options remotely
 The app's Configuration tab has an `overrides` list, applied on top of `config.yaml`, one per line:
 ```
-to_office/Ferry.travel_minutes=12                 # set a field
-to_office/Harbor Bay ferry.clone=Ferry            # add an option by copying one…
+to_office/Seaplane Ferry.travel_minutes=12        # set a field
+to_office/Harbor Bay ferry.clone=Seaplane Ferry   # add an option by copying one…
 to_office/Harbor Bay ferry.stop=7206              # …then set its fields
 location_directions={home: to_office, office: to_home}   # top-level setting
 ```
+Lines apply in order, so a rename (`to_office/Seaplane Ferry.name=…`) only affects the lines after it.
 Bad lines are logged and skipped; they never stop the app.
 
 ## Rate budget

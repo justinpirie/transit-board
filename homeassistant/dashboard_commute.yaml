@@ -30,11 +30,11 @@ views:
         {% endif %}
         {% if cal.holiday %}🗓️ {{ cal.holiday }}{% endif %}{% if cal.first_in_person %} · first in person: {{ cal.first_in_person.split(' @ ')[0] }}{% endif %}
 
-        | | Option | Leave in | Departs | Arrive | Then |
-        |:-:|:--|--:|:-:|:-:|:--|
+        | Option | Leave in | Departs | Arrive | Then |
+        |:--|--:|:-:|:-:|:--|
         {% for o in state_attr(s, 'options') or [] -%}
         {%- set n = o.next -%}
-        | {{ '★' if r and o.option == r.option else '' }} | {{ icons.get(o.mode, '') }} {{ ('_' ~ o.option ~ '_') if o.fallback else o.option }} | {{ (n.leave_in ~ ' min') if n else '—' }} | {{ n.depart[11:16] if n else '' }}{{ '' if not n or n.realtime else ' 🕒' }} | {{ n.eta[11:16] if n else '' }}{{ ' ⚠️' if n and n.on_time == false else '' }} | {{ o.later | join(', ') }} |
+        | {{ icons.get(o.mode, '') }} {{ ('_' ~ o.option ~ '_') if o.fallback else o.option }} | {{ (n.leave_in ~ ' min') if n else '—' }} | {{ n.depart[11:16] if n else '' }}{{ '' if not n or n.realtime else ' 🕒' }} | {{ n.eta[11:16] if n else '' }}{{ ' ⚠️' if n and n.on_time == false else '' }} | {{ o.later | join(', ') }} |
         {% endfor %}
     - type: tile
       entity: input_boolean.commute_today

@@ -28,7 +28,7 @@ location_directions:
 # Office-side walk times are estimates from the office. Adjust after a week.
 directions:
   to_office:
-    - name: Ferry
+    - name: Seaplane Ferry
       mode: ferry
       priority: 1
       always_prefer: true       # wins whenever it works, regardless of slack
@@ -103,7 +103,7 @@ directions:
       egress_minutes: 5
 
   to_home:
-    - name: Ferry
+    - name: Seaplane Ferry
       mode: ferry
       priority: 1
       always_prefer: true       # wins whenever it works, regardless of slack
