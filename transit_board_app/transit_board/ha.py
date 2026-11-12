@@ -179,15 +179,21 @@ class TomorrowPublisher:
         return t
 
 
-async def publish_forever(ha: HomeAssistant, ent: Entities, build_plan,
-                          cal: CalendarCache | None = None, now_fn=None, every: float = 60,
-                          tomorrow: TomorrowPublisher | None = None) -> None:
+async def tomorrow_forever(ha: HomeAssistant, tomorrow: TomorrowPublisher, now_fn,
+                           every: float = 60) -> None:
+    """Separate loop from the live sensor: the first GTFS download + parse
+    takes a while on a Pi, and must not stall live updates."""
     while True:
-        if tomorrow and now_fn:
-            try:
-                await tomorrow.maybe_publish(ha, now_fn())
-            except Exception as e:
-                log.warning("tomorrow plan failed: %s", e)
+        try:
+            await tomorrow.maybe_publish(ha, now_fn())
+        except Exception as e:
+            log.warning("tomorrow plan failed: %s", e)
+        await asyncio.sleep(every)
+
+
+async def publish_forever(ha: HomeAssistant, ent: Entities, build_plan,
+                          cal: CalendarCache | None = None, now_fn=None, every: float = 60) -> None:
+    while True:
         try:
             await publish_once(ha, ent, build_plan, cal, now_fn() if now_fn else None)
         except Exception as e:  # HA restarting, network blip: try again next tick

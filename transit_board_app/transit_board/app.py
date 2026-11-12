@@ -28,7 +28,8 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from .config import load_config
 from .calendar_ctx import CalendarRules
-from .ha import CalendarCache, Entities, HomeAssistant, TomorrowPublisher, publish_forever
+from .ha import (CalendarCache, Entities, HomeAssistant, TomorrowPublisher, publish_forever,
+                 tomorrow_forever)
 from .poller import Poller, fetch_stop_monitoring
 from .siri import decode_511
 from .schedule import ScheduleStore
@@ -65,9 +66,11 @@ async def lifespan(app: FastAPI):
                               poller.client, poller.limiter, poller.cfg.tz)
         app.state.tomorrow = lambda now: build_tomorrow(poller.cfg, store.departures, now, rules,
                                                         ha.get_events)
+        app.state.schedule = store
         tasks.append(asyncio.create_task(publish_forever(
-            ha, ent, build, CalendarCache(rules), poller.local_now,
-            tomorrow=TomorrowPublisher(app.state.tomorrow))))
+            ha, ent, build, CalendarCache(rules), poller.local_now)))
+        tasks.append(asyncio.create_task(tomorrow_forever(
+            ha, TomorrowPublisher(app.state.tomorrow), poller.local_now)))
         logging.info("publishing %s to Home Assistant every 60s", ent.sensor)
     yield
     for t in tasks:
@@ -190,6 +193,24 @@ async def tomorrow_endpoint():
     if build is None:
         raise HTTPException(503, "only available when running inside Home Assistant")
     return await build(app.state.poller.local_now())
+
+
+@app.get("/schedule")
+async def schedule_endpoint(agency: str, stop: str, day: str | None = None, after: str = "00:00",
+                            limit: int = 30):
+    """Debug: scheduled departures from GTFS, e.g. ?agency=SB&stop=7207&after=06:00"""
+    store = getattr(app.state, "schedule", None)
+    if store is None:
+        raise HTTPException(503, "only available when running inside Home Assistant")
+    p: Poller = app.state.poller
+    d = datetime.fromisoformat(day).date() if day else p.local_now().date()
+    deps = (await store.departures(agency, {stop}, d))[stop]
+    out = []
+    for a in deps:
+        t = datetime.fromtimestamp(a["arrival_ts"], p.cfg.tz).strftime("%H:%M")
+        if t >= after:
+            out.append(f"{t}  {a['line']} → {a['dest']}")
+    return {"date": d.isoformat(), "count": len(deps), "departures": out[:limit]}
 
 
 @app.get("/peek")
