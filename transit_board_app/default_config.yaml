@@ -15,7 +15,7 @@ switch_hour: 12
 
 # Night-before plan (sensor.commute_tomorrow, from GTFS timetables):
 default_arrive_by: "09:30"      # latest office arrival when no earlier in-person meeting
-default_home_by: "18:30"        # latest home arrival when no earlier home-area event
+default_home_by: "17:05"        # home by 5:05 = the 4:30pm Seaplane ferry (lands ~4:50 + 12 min bike)
 home_location_regex: "Alameda"  # evening calendar events here set the home-by time
 
 location_directions:

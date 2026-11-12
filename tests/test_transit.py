@@ -151,7 +151,7 @@ def test_shipped_config_yaml_loads(monkeypatch):
         "Ferry", "O bus", "W bus", "Harbor Bay ferry", "BART (Fruitvale)", "Uber → West Oakland BART"]
     assert office["Harbor Bay ferry"].travel_minutes == 27
     assert cfg.location_directions == {"home": "to_office", "office": "to_home"}
-    assert (cfg.default_arrive_by, cfg.default_home_by) == ("09:30", "18:30")
+    assert (cfg.default_arrive_by, cfg.default_home_by) == ("09:30", "17:05")
     # budget check from the docs: ~46 calls/hr mornings, ~38 evenings, under 50
     assert (round(cfg.calls_per_hour("to_office")), round(cfg.calls_per_hour("to_home"))) == (46, 38)
 
