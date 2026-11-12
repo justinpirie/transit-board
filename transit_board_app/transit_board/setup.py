@@ -104,7 +104,46 @@ def _describe(opt: Option, peek: list[dict] | str) -> list[str]:
         return ["              (no live departures right now; try during service hours)"]
     seen: dict[tuple, int] = {}
     for a in peek:
-        k = (a["line"], a["dest"])
+        k = (a["line"], a.get("line_ref"), a.get("line_name"), a["dest"])
         seen[k] = seen.get(k, 0) + 1
-    return [f"            {'✓' if opt.accepts({'line': l, 'line_ref': l, 'dest': d}) else ' '} "
-            f"{l} → {d}  ({n} upcoming)" for (l, d), n in sorted(seen.items(), key=str)]
+    out = []
+    for (line, ref, name, dest), n in sorted(seen.items(), key=str):
+        ok = opt.accepts({"line": line, "line_ref": ref, "dest": dest})
+        label = f"{line} [{name}]" if name and name != line else line
+        out.append(f"            {'✓' if ok else ' '} {label} → {dest}  ({n} upcoming)")
+    return out
+
+
+async def find_line(cfg: Config, client: httpx.AsyncClient, limiter: RateLimiter,
+                    agency: str, line: str, query: str = "") -> str:
+    """Find the stops where `line` is serving right now, optionally only those
+    whose name contains all `query` words.
+
+    One agency-wide StopMonitoring call (no stopcode), so it costs 1 request
+    no matter how many stops match. Ideal for big terminals like Salesforce
+    Transit Center, where a name search returns dozens of bays."""
+    if not limiter.try_acquire():
+        return "rate budget exhausted; try again later\n"
+    from .poller import STOP_MONITORING_URL
+    from .siri import parse_stop_monitoring
+    r = await client.get(STOP_MONITORING_URL, params={
+        "api_key": cfg.api_key, "agency": agency, "format": "json"}, timeout=60)
+    r.raise_for_status()
+    visits = parse_stop_monitoring(decode_511(r.content))
+    words = [w for w in query.lower().split() if w]
+    stops: dict[tuple, dict] = {}
+    for a in visits:
+        if line not in (a["line"], a["line_ref"]):
+            continue
+        name = a["stop_name"] or ""
+        if not all(w in name.lower() for w in words):
+            continue
+        s = stops.setdefault((a["stop_ref"], name), {})
+        s[a["dest"]] = s.get(a["dest"], 0) + 1
+    if not stops:
+        return f"line {line} isn't serving any stop matching {query!r} right now\n"
+    lines = [f"Line {line} ({agency}) live stops matching {query!r}:"]
+    for (ref, name), dests in sorted(stops.items(), key=str):
+        for dest, n in dests.items():
+            lines.append(f"   stop {ref:>8}  {name}  → {dest}  ({n})")
+    return "\n".join(lines) + "\n"

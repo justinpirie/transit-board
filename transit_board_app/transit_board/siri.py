@@ -83,11 +83,15 @@ def parse_stop_monitoring(payload: dict[str, Any]) -> list[dict[str, Any]]:
         if ts is None:
             continue
 
+        line_ref = _text(j.get("LineRef"))
+        published = _text(j.get("PublishedLineName"))
         out.append({
-            # PublishedLineName is the rider-facing name ("NL", "Yellow");
-            # LineRef is the internal ID. Prefer the former for display.
-            "line": _text(j.get("PublishedLineName")) or _text(j.get("LineRef")),
-            "line_ref": _text(j.get("LineRef")),
+            # For display: AC publishes a long name ("Santa Clara - Encinal
+            # Transbay") where riders know the short ref ("O"), so use a short
+            # LineRef when there is one; otherwise the published name.
+            "line": line_ref if line_ref and len(line_ref) <= 4 else (published or line_ref),
+            "line_ref": line_ref,
+            "line_name": published,
             "dest": _text(j.get("DestinationName")),
             "arrival_ts": ts,
             "realtime": bool(_parse_ts(expected)),

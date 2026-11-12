@@ -350,3 +350,19 @@ def test_overrides_set_stop_codes_and_times(monkeypatch):
     assert cfg.slack_minutes == 10
     obus = next(o for d, o in cfg.pending if d == "to_office" and o.name == "O bus")
     assert obus.lines == ("O", "OX")
+
+
+def test_short_lineref_used_for_display():
+    payload = {"ServiceDelivery": {"StopMonitoringDelivery": {"MonitoredStopVisit": [
+        {"MonitoredVehicleJourney": {"LineRef": "O", "PublishedLineName": "Santa Clara - Encinal Transbay",
+                                     "DestinationName": "Salesforce Transit Center Bay 28",
+                                     "MonitoredCall": {"ExpectedArrivalTime": iso(4)}}},
+        {"MonitoredVehicleJourney": {"LineRef": "Blue-N", "PublishedLineName": "Daly City to Dublin/Pleasanton",
+                                     "DestinationName": "Dublin / Pleasanton",
+                                     "MonitoredCall": {"ExpectedArrivalTime": iso(6)}}}]}}}
+    ac, bart = parse_stop_monitoring(payload)
+    assert (ac["line"], ac["line_name"]) == ("O", "Santa Clara - Encinal Transbay")
+    assert bart["line"] == "Daly City to Dublin/Pleasanton"      # long ref → published name
+    opt = _option({"name": "O", "mode": "bus", "priority": 2, "agency": "AC", "stop": "1",
+                   "lines": ["O"], "dest_match": ["Transit"]})
+    assert opt.accepts(ac)

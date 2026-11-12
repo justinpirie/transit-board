@@ -24,7 +24,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from .config import load_config
 from .poller import Poller, fetch_stop_monitoring
-from .setup import setup_report
+from .setup import find_line, setup_report
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -103,6 +103,13 @@ async def setup():
     return await setup_report(p.cfg, p.client, p.limiter)
 
 
+@app.get("/find_line", response_class=PlainTextResponse)
+async def find_line_endpoint(agency: str, line: str, q: str = ""):
+    """Stops where a line is serving right now, e.g. ?agency=AC&line=O&q=salesforce"""
+    p: Poller = app.state.poller
+    return await find_line(p.cfg, p.client, p.limiter, agency, line, q)
+
+
 @app.get("/peek")
 async def peek(agency: str, stop: str):
     """Live departures at any stop, unfiltered, for checking a stop code by hand."""
@@ -111,7 +118,7 @@ async def peek(agency: str, stop: str):
         raise HTTPException(429, "rate budget exhausted")
     arrivals = await fetch_stop_monitoring(p.client, p.cfg.api_key, agency, stop)
     now = p.clock()
-    return sorted(({"line": a["line"], "dest": a["dest"], "realtime": a["realtime"],
+    return sorted(({"line": a["line"], "line_ref": a["line_ref"], "line_name": a["line_name"], "dest": a["dest"], "realtime": a["realtime"],
                     "mins": int((a["arrival_ts"] - now) // 60)} for a in arrivals),
                   key=lambda a: a["mins"])
 
