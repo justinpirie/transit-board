@@ -23,12 +23,16 @@ location_directions:
   office: to_home             # needs a zone named "Office" in HA (person state 'Office')
 
 # Buffers (be at the stop before departure): ferry/BART 3 min, bus 2 min (mode defaults).
+# Ferries and BART refresh every 15 min (they run close to schedule) to fit 6 morning
+# stops in the 50 calls/hr budget: ~46/hr mornings, ~38/hr evenings.
 # Office-side walk times are estimates from the office. Adjust after a week.
 directions:
   to_office:
     - name: Ferry
       mode: ferry
       priority: 1
+      always_prefer: true       # wins whenever it works, regardless of slack
+      refresh_seconds: 900
       agency: SB
       stop: "7207"
       stop_query: "seaplane"
@@ -61,9 +65,22 @@ directions:
       ride_minutes: 35
       egress_minutes: 10
 
+    - name: Harbor Bay ferry
+      mode: ferry
+      priority: 3
+      agency: SB
+      stop: "7206"              # Harbor Bay Ferry Terminal
+      stop_query: "harbor bay"
+      dest_match: ["San Francisco", "Ferry Building"]
+      travel_minutes: 27        # bike
+      ride_minutes: 25
+      egress_minutes: 15        # Ferry Building → office on foot
+      refresh_seconds: 900
+
     - name: BART (Fruitvale)
       mode: bart
-      priority: 3
+      priority: 4
+      refresh_seconds: 900
       agency: BA
       stop: "902202"
       stop_query: "fruitvale"
@@ -74,7 +91,8 @@ directions:
 
     - name: Uber → West Oakland BART
       mode: bart
-      priority: 4
+      priority: 5
+      refresh_seconds: 900
       fallback: true            # last resort: never the yardstick for 'fastest'
       agency: BA
       stop: "901101"
@@ -88,6 +106,8 @@ directions:
     - name: Ferry
       mode: ferry
       priority: 1
+      always_prefer: true       # wins whenever it works, regardless of slack
+      refresh_seconds: 900
       agency: SB
       stop: "72013"
       stop_query: "ferry building"
@@ -120,9 +140,22 @@ directions:
       ride_minutes: 35
       egress_minutes: 5         # bike home
 
+    - name: Harbor Bay ferry
+      mode: ferry
+      priority: 3
+      agency: SB
+      stop: "72013"             # SF Ferry Building Gate F (shared with the Seaplane ferry)
+      stop_query: "ferry building"
+      dest_match: ["Harbor Bay"]
+      travel_minutes: 15        # office → Ferry Building
+      ride_minutes: 25
+      egress_minutes: 27        # bike home
+      refresh_seconds: 900
+
     - name: BART (→ Fruitvale)
       mode: bart
-      priority: 3
+      priority: 4
+      refresh_seconds: 900
       agency: BA
       stop: "901202"
       stop_query: "montgomery"
@@ -133,7 +166,8 @@ directions:
 
     - name: BART → West Oakland + Uber
       mode: bart
-      priority: 4
+      priority: 5
+      refresh_seconds: 900
       fallback: true
       agency: BA
       stop: "901202"

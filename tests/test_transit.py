@@ -140,16 +140,20 @@ def test_shared_stop_fetched_once_and_budget_fits():
 def test_shipped_config_yaml_loads(monkeypatch):
     monkeypatch.setenv("API_KEY_511", "x")
     cfg = load_config(os.path.join(os.path.dirname(__file__), "..", "transit_board_app", "default_config.yaml"))
-    # Shipped config has every stop resolved: nothing pending, all 10 options polled
-    assert cfg.pending == [] and sum(len(v) for v in cfg.directions.values()) == 10
+    # Shipped config has every stop resolved: nothing pending, all 12 options polled
+    assert cfg.pending == [] and sum(len(v) for v in cfg.directions.values()) == 12
     office = {o.name: o for o in cfg.directions["to_office"]}
     assert list(office)[0] == "Ferry" and office["Ferry"].stop == "7207"
     assert (office["O bus"].buffer_minutes, office["O bus"].travel_minutes) == (2, 13)
     assert office["Uber → West Oakland BART"].fallback
+    assert office["Ferry"].always_prefer and not office["Harbor Bay ferry"].always_prefer
+    assert [o.name for o in cfg.directions["to_office"]] == [
+        "Ferry", "O bus", "W bus", "Harbor Bay ferry", "BART (Fruitvale)", "Uber → West Oakland BART"]
+    assert office["Harbor Bay ferry"].travel_minutes == 27
     assert cfg.location_directions == {"home": "to_office", "office": "to_home"}
     assert (cfg.default_arrive_by, cfg.default_home_by) == ("09:30", "18:30")
-    # budget check from the docs: a full morning is ~48 calls/hr, under 50
-    assert round(cfg.calls_per_hour("to_office")) == 48
+    # budget check from the docs: ~46 calls/hr mornings, ~38 evenings, under 50
+    assert (round(cfg.calls_per_hour("to_office")), round(cfg.calls_per_hour("to_home"))) == (46, 38)
 
 
 @pytest.mark.parametrize("hhmm,day,at,expected", [

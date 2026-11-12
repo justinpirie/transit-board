@@ -1,7 +1,7 @@
 # transit-board
 
 A Home Assistant app that plans a Bay Area commute from 511.org real-time data.
-It ranks your options (ferry > bus > BART > Uber+BART), counts down to when you
+It ranks your options (Seaplane ferry > bus > Harbor Bay ferry > BART > Uber+BART), counts down to when you
 need to **leave**, using your travel time and buffer, and pushes "leave now" to your phone.
 GPS and calendar context from HA steer it.
 
@@ -83,9 +83,20 @@ Direction is picked in this order: `direction`, then `at`, then the commute wind
 ### How the recommendation works
 Each option's *next catchable* departure gets
 `leave_in = mins_to_departure − travel − buffer` and `eta = departure + ride + egress`.
+- **`always_prefer` (the Seaplane ferry):** wins whenever it's catchable, and on time when there's a deadline. No slack applies.
 - **No deadline:** pick the highest-priority option whose ETA is within `slack_minutes` (15) of the fastest.
 - **With `arrive_by`:** pick the highest-priority option that's on time. If none is, pick the earliest arrival and flag it late.
 - `backup` is what the same logic picks with the recommendation removed.
+
+### Changing options remotely
+The app's Configuration tab has an `overrides` list, applied on top of `config.yaml`, one per line:
+```
+to_office/Ferry.travel_minutes=12                 # set a field
+to_office/Harbor Bay ferry.clone=Ferry            # add an option by copying one…
+to_office/Harbor Bay ferry.stop=7206              # …then set its fields
+location_directions={home: to_office, office: to_home}   # top-level setting
+```
+Bad lines are logged and skipped; they never stop the app.
 
 ## Rate budget
 511 allows 60 calls/hr per token by default. Stops refresh per mode (bus 4 min, ferry/BART 10 min),
