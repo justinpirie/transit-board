@@ -100,7 +100,7 @@ Bad lines are logged and skipped; they never stop the app.
 
 ## Rate budget
 511 allows 60 calls/hr per token by default. Stops refresh per mode (bus 4 min, ferry/BART 10 min),
-and shared stops are fetched once. A full morning (5 stops) is about 48 calls/hr against a budget of 50.
+and shared stops are fetched once. Six morning stops come to about 46 calls/hr (38 evenings) against a budget of 50.
 Background polling only runs inside commute windows, and stops when HA says you've left home or it's a WFH day.
 On HTTP 429 the app backs off for 15 min and serves cached data marked `stale`.
 
