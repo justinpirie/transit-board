@@ -92,6 +92,10 @@ class Config:
     idle_ttl_seconds: int = 600
     hint_ttl_seconds: int = 600        # How long an HA location/commute hint stays valid
     pending: list[tuple[str, Option]] = field(default_factory=list)  # (direction, option) with stop TODO
+    # Night-before planning (tomorrow.py)
+    default_arrive_by: str = "09:30"   # latest office arrival when no earlier in-person meeting
+    default_home_by: str = "18:30"     # latest home arrival when no earlier home-area event
+    home_location_regex: str = r"Alameda"  # evening events here set the home-by time
 
     # ── direction ──────────────────────────────────────────────────────
     def active_window(self, now: datetime) -> Window | None:
@@ -234,6 +238,9 @@ def load_config(path: str | None = None) -> Config:
               "idle_ttl_seconds", "hint_ttl_seconds"):
         if k in raw:
             setattr(cfg, k, int(raw[k]))
+    for k in ("default_arrive_by", "default_home_by", "home_location_regex"):
+        if k in raw:
+            setattr(cfg, k, str(raw[k]))
 
     for d in directions:  # Fail loudly at startup, not at 8am when you're out of quota
         cph = cfg.calls_per_hour(d)

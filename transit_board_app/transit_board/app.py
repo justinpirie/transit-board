@@ -28,10 +28,12 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from .config import load_config
 from .calendar_ctx import CalendarRules
-from .ha import CalendarCache, Entities, HomeAssistant, publish_forever
+from .ha import CalendarCache, Entities, HomeAssistant, TomorrowPublisher, publish_forever
 from .poller import Poller, fetch_stop_monitoring
 from .siri import decode_511
+from .schedule import ScheduleStore
 from .setup import find_line, setup_report
+from .tomorrow import build_tomorrow
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 # httpx logs every request URL at INFO, and 511 takes the API key as a query
@@ -58,8 +60,14 @@ async def lifespan(app: FastAPI):
         if rules:
             logging.info("reading calendars %s (holidays: %s)", rules.work_calendars,
                          rules.holiday_calendar or "none")
+        ha = HomeAssistant(ha_client)
+        store = ScheduleStore(poller.cfg.api_key, os.environ.get("TRANSIT_GTFS_DIR", "/data/gtfs"),
+                              poller.client, poller.limiter, poller.cfg.tz)
+        app.state.tomorrow = lambda now: build_tomorrow(poller.cfg, store.departures, now, rules,
+                                                        ha.get_events)
         tasks.append(asyncio.create_task(publish_forever(
-            HomeAssistant(ha_client), ent, build, CalendarCache(rules), poller.local_now)))
+            ha, ent, build, CalendarCache(rules), poller.local_now,
+            tomorrow=TomorrowPublisher(app.state.tomorrow))))
         logging.info("publishing %s to Home Assistant every 60s", ent.sensor)
     yield
     for t in tasks:
@@ -173,6 +181,15 @@ async def raw511(endpoint: str, request: Request, sample: int = 2):
             return {k: trim(v) for k, v in x.items()}
         return x
     return trim(decode_511(r.content))
+
+
+@app.get("/tomorrow")
+async def tomorrow_endpoint():
+    """Tomorrow's plan, computed now (same as sensor.commute_tomorrow)."""
+    build = getattr(app.state, "tomorrow", None)
+    if build is None:
+        raise HTTPException(503, "only available when running inside Home Assistant")
+    return await build(app.state.poller.local_now())
 
 
 @app.get("/peek")

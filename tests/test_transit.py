@@ -549,3 +549,162 @@ async def test_publish_uses_calendar_and_toggle_can_veto():
     await publish_once(ha, Entities(person="person.me"), lambda **h: build_plan(p, **h), cal, now)
     a = posted[-1]["attributes"]
     assert a["commute_today"] is False and a["polling_paused"] is True
+
+
+# ─── Night-before planning: GTFS + tomorrow planner ──────────────────────
+
+import zipfile as _zip
+from datetime import date as _date
+
+
+def gtfs_zip(path, stop_times, trips, routes, calendar=None, calendar_dates=None):
+    """Write a tiny GTFS zip. Each arg is a list of dicts → CSV."""
+    def csvtext(rows):
+        cols = list(rows[0]) if rows else ["x"]
+        return "﻿" + ",".join(cols) + "\n" + "".join(",".join(str(r[c]) for c in cols) + "\n" for r in rows)
+    with _zip.ZipFile(path, "w") as z:
+        z.writestr("stop_times.txt", csvtext(stop_times))
+        z.writestr("trips.txt", csvtext(trips))
+        z.writestr("routes.txt", csvtext(routes))
+        if calendar is not None: z.writestr("calendar.txt", csvtext(calendar))
+        if calendar_dates is not None: z.writestr("calendar_dates.txt", csvtext(calendar_dates))
+    return path
+
+
+WED = _date(2026, 11, 11)
+CAL_ALL = [{"service_id": "WK", "monday": 1, "tuesday": 1, "wednesday": 1, "thursday": 1, "friday": 1,
+            "saturday": 0, "sunday": 0, "start_date": "20260101", "end_date": "20261231"}]
+
+
+def test_gtfs_services_exceptions_and_after_midnight(tmp_path):
+    from transit_board.schedule import active_services, departures_from_zip
+    p = gtfs_zip(tmp_path / "f.zip",
+        stop_times=[{"trip_id": "t1", "arrival_time": "08:10:00", "departure_time": "08:12:00", "stop_id": "S1"},
+                    {"trip_id": "t2", "arrival_time": "25:05:00", "departure_time": "25:05:00", "stop_id": "S1"},
+                    {"trip_id": "t3", "arrival_time": "09:00:00", "departure_time": "09:00:00", "stop_id": "S1"},
+                    {"trip_id": "t1", "arrival_time": "08:30:00", "departure_time": "08:30:00", "stop_id": "OTHER"}],
+        trips=[{"trip_id": "t1", "route_id": "r1", "service_id": "WK", "trip_headsign": "San Francisco"},
+               {"trip_id": "t2", "route_id": "r1", "service_id": "WK", "trip_headsign": "Owl"},
+               {"trip_id": "t3", "route_id": "r1", "service_id": "HOL", "trip_headsign": "Holiday only"}],
+        routes=[{"route_id": "r1", "route_short_name": "O", "route_long_name": "Santa Clara"}],
+        calendar=CAL_ALL,
+        calendar_dates=[{"service_id": "HOL", "date": "20261111", "exception_type": 1}])
+    z = _zip.ZipFile(p)
+    assert active_services(z, WED) == {"WK", "HOL"}
+    deps = departures_from_zip(z, {"S1"}, WED, TZ)["S1"]
+    times = [datetime.fromtimestamp(d["arrival_ts"], TZ).strftime("%m-%d %H:%M") for d in deps]
+    assert times == ["11-11 08:12", "11-11 09:00", "11-12 01:05"]   # departure_time; 25:05 → next day
+    assert deps[0]["line"] == "O" and deps[0]["dest"] == "San Francisco" and not deps[0]["realtime"]
+
+
+def _sched(*mins_by_stop):
+    """{stop_key: [dep at 06:00 + m minutes, ...]} on Thu 2026-11-12."""
+    base = datetime(2026, 11, 12, 6, 0, tzinfo=TZ).timestamp()
+    out = {}
+    for key, line, dest, mins in mins_by_stop:
+        out.setdefault(key, []).extend({"line": line, "line_ref": line, "dest": dest, "realtime": False,
+                                        "arrival_ts": base + m * 60} for m in mins)
+    return out
+
+
+def test_plan_leg_latest_on_time_and_slack():
+    from transit_board.tomorrow import plan_leg
+    opts = make_cfg().directions["to_office"]
+    opts[4] = _option({"name": "Uber+BART", "mode": "bart", "priority": 4, "agency": "BA", "stop": "WOAK",
+                       "travel_minutes": 20, "ride_minutes": 8, "egress_minutes": 5, "fallback": True})
+    deadline = datetime(2026, 11, 12, 9, 0, tzinfo=TZ)
+    # Leave = dep − travel − buffer; ETA = dep + ride + egress (make_cfg values)
+    deps = _sched(("SB:FERRY", "SEA", "SF", [60, 120]),   # 08:00: leave 07:49, ETA 08:30
+                  ("AC:O", "O", "SF", [110]),             # 07:50: leave 07:43, ETA 08:38
+                  ("BA:FTVL", "G", "Daly City", [130]))   # 08:10: leave 07:55, ETA 08:31 (latest leave)
+    r = plan_leg(opts, deps, deadline, deadline - timedelta(hours=4), 15, TZ)
+    # Ferry means leaving 6 min before the latest-leaving option: within 15 min slack → ferry
+    assert (r["option"], r["depart"][11:16], r["leave_at"][11:16]) == ("Ferry", "08:00", "07:49")
+    assert r["reason"] == "preferred" and r["on_time"]
+    assert (r["backup"]["option"], r["backup"]["depart"][11:16]) == ("O bus", "07:50")
+
+    # Slack 5: ferry (6 min earlier) and O (12 min) are out → BART, leave as late as possible
+    r = plan_leg(opts, deps, deadline, deadline - timedelta(hours=4), 5, TZ)
+    assert (r["option"], r["leave_at"][11:16]) == ("BART", "07:55")
+
+
+def test_plan_leg_fallback_and_late():
+    from transit_board.tomorrow import plan_leg
+    opts = make_cfg().directions["to_office"]
+    opts[4] = _option({"name": "Uber+BART", "mode": "bart", "priority": 4, "agency": "BA", "stop": "WOAK",
+                       "travel_minutes": 20, "ride_minutes": 8, "egress_minutes": 5, "fallback": True})
+    deadline = datetime(2026, 11, 12, 6, 50, tzinfo=TZ)
+    deps = _sched(("AC:O", "O", "SF", [20]), ("BA:WOAK", "Y", "SFO", [30]))   # O ETA 07:08; Uber ETA 06:43
+    r = plan_leg(opts, deps, deadline, deadline - timedelta(hours=4), 15, TZ)
+    assert r["option"] == "Uber+BART" and r["reason"] == "only the fallback arrives on time"
+    late = plan_leg(opts, _sched(("AC:O", "O", "SF", [20])), deadline, deadline - timedelta(hours=4), 15, TZ)
+    assert late["reason"].startswith("running late") and "18 min" in late["reason"]
+
+
+async def test_build_tomorrow_targets_from_calendar():
+    from transit_board.tomorrow import build_tomorrow
+    cfg = make_cfg(default_arrive_by="09:30", default_home_by="18:30", home_location_regex="Alameda",
+                   location_directions={"home": "to_office", "office": "to_home"})
+    rules = CalendarRules(work_calendars=[WORK], holiday_calendar=HOL)
+    events = {WORK: [ev("Design review", "2026-11-12T08:30:00-08:00", location="SF-4-Room (6)"),
+                     ev("Kids' recital", "2026-11-12T17:30:00-08:00", location="School Hall, Alameda, CA"),
+                     ev("Dinner", "2026-11-12T19:30:00-08:00", location="Somewhere, Oakland")],
+              HOL: []}
+
+    async def get_events(cals, start, end):
+        assert start.date() == _date(2026, 11, 12)
+        return events
+
+    async def deps_for(agency, stops, day):
+        base = datetime(2026, 11, 12, 6, 0, tzinfo=TZ).timestamp()
+        mk = lambda line, dest, mins: [{"line": line, "line_ref": line, "dest": dest, "realtime": False,
+                                        "arrival_ts": base + m * 60} for m in mins]
+        table = {("SB", "FERRY"): mk("SEA", "SF", [60, 120]),
+                 ("AC", "O"): mk("O", "SF", [90]),
+                 ("BA", "MONT"): mk("G", "Berryessa", [600, 630, 660])}   # 16:00, 16:30, 17:00
+        return {s: table.get((agency, s), []) for s in stops}
+
+    now = datetime(2026, 11, 11, 20, 0, tzinfo=TZ)
+    t = await build_tomorrow(cfg, deps_for, now, rules, get_events)
+    assert t["date"] == "2026-11-12" and t["commute"]
+    m = t["morning"]
+    assert m["target"][11:16] == "08:25"                           # meeting 08:30 − 5, earlier than 09:30
+    # 08:00 ferry lands 08:30 (late). 07:00 ferry means leaving 06:49, 34 min before the
+    # 07:30 O (leave 07:23, ETA 08:18): beyond the 15-min slack, so the O wins.
+    assert (m["option"], m["depart"][11:16], m["leave_at"][11:16]) == ("O bus", "07:30", "07:23")
+    assert m["backup"]["option"] == "Ferry"
+    e = t["evening"]
+    assert t["home_event"] == "17:30 Kids' recital"                # Oakland dinner ignored
+    assert e["target"][11:16] == "17:20"
+    assert (e["option"], e["depart"][11:16]) == ("BART Fruitvale", "17:00")   # 17:00+16 = 17:16 ≤ 17:20: latest on time
+
+
+async def test_build_tomorrow_day_off_and_payload():
+    from transit_board.ha import tomorrow_payload
+    from transit_board.tomorrow import build_tomorrow
+    cfg = make_cfg()
+    async def nothing(*a): return {}
+    sat = await build_tomorrow(cfg, nothing, datetime(2026, 11, 13, 20, 0, tzinfo=TZ))   # Fri → Sat
+    assert (sat["commute"], sat["morning"]) == (False, None)
+    assert tomorrow_payload(sat)[0] == "unknown"
+    state, attrs = tomorrow_payload({"commute": True, "morning": {"leave_at": "2026-11-12T07:49-08:00"}})
+    assert state == "2026-11-12T07:49:00-08:00" and attrs["device_class"] == "timestamp"
+
+
+async def test_schedule_store_downloads_once_and_caches(tmp_path):
+    from transit_board.schedule import ScheduleStore
+    src = gtfs_zip(tmp_path / "src.zip",
+        stop_times=[{"trip_id": "t1", "arrival_time": "08:00:00", "departure_time": "08:00:00", "stop_id": "7207"}],
+        trips=[{"trip_id": "t1", "route_id": "SEA", "service_id": "WK", "trip_headsign": "San Francisco Ferry Building"}],
+        routes=[{"route_id": "SEA", "route_short_name": "", "route_long_name": "Alameda Seaplane"}],
+        calendar=CAL_ALL)
+    calls = []
+    def handler(req):
+        calls.append(req.url.params["operator_id"])
+        return httpx.Response(200, content=open(src, "rb").read())
+    store = ScheduleStore("k", str(tmp_path / "cache"), httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+                          RateLimiter(50), TZ)
+    d1 = await store.departures("SB", {"7207"}, WED)
+    d2 = await store.departures("SB", {"7207"}, WED)
+    assert calls == ["SB"]                                         # one download, then cache
+    assert d1 == d2 and d1["7207"][0]["line"] == "Alameda Seaplane"

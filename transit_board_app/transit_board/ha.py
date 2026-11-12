@@ -148,9 +148,46 @@ async def publish_once(ha: HomeAssistant, ent: Entities, build_plan,
     return plan
 
 
+TOMORROW_SENSOR = "sensor.commute_tomorrow"
+
+
+def tomorrow_payload(t: dict) -> tuple[str, dict]:
+    """State = when to leave tomorrow morning (timestamp), 'unknown' on days off."""
+    m = t.get("morning")
+    state = (datetime.fromisoformat(m["leave_at"]).isoformat(timespec="seconds")
+             if t.get("commute") and m else "unknown")
+    return state, {**t, "friendly_name": "Commute tomorrow", "device_class": "timestamp",
+                   "icon": "mdi:calendar-clock"}
+
+
+class TomorrowPublisher:
+    """Recompute tomorrow's plan from 15:00 onwards, at most every 30 min
+    (calendars change during the day; timetables are cached on disk)."""
+    def __init__(self, build, every: float = 1800):
+        self.build, self.every = build, every
+        self.at: datetime | None = None
+
+    async def maybe_publish(self, ha: HomeAssistant, now: datetime) -> dict | None:
+        if now.hour < 15:
+            return None
+        if self.at and self.at.date() == now.date() and (now - self.at).total_seconds() < self.every:
+            return None
+        t = await self.build(now)
+        state, attrs = tomorrow_payload(t)
+        await ha.set_state(TOMORROW_SENSOR, state, attrs)
+        self.at = now
+        return t
+
+
 async def publish_forever(ha: HomeAssistant, ent: Entities, build_plan,
-                          cal: CalendarCache | None = None, now_fn=None, every: float = 60) -> None:
+                          cal: CalendarCache | None = None, now_fn=None, every: float = 60,
+                          tomorrow: TomorrowPublisher | None = None) -> None:
     while True:
+        if tomorrow and now_fn:
+            try:
+                await tomorrow.maybe_publish(ha, now_fn())
+            except Exception as e:
+                log.warning("tomorrow plan failed: %s", e)
         try:
             await publish_once(ha, ent, build_plan, cal, now_fn() if now_fn else None)
         except Exception as e:  # HA restarting, network blip: try again next tick
