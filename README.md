@@ -37,7 +37,7 @@ Then:
 
 The app writes `sensor.commute_leave_in` every 60 s:
 - **State:** minutes until you must leave for the recommended option, or `unavailable`.
-- **Attributes:** `recommended`, `backup`, `options`, `direction`, `commute_today`, `arrive_by`, `stale`,
+- **Attributes:** `recommended`, `backup`, `options` (each with `next`, which includes `leave_at`, and `later_at`, the next leave times as `HH:MM`), `direction`, `commute_today`, `arrive_by`, `stale`,
   `polling_paused`, and `calendar` (`reason`, `holiday`, `first_in_person`).
 
 ### Night before: `sensor.commute_tomorrow`

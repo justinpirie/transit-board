@@ -34,7 +34,7 @@ views:
         |:--|--:|:-:|:-:|:--|
         {% for o in state_attr(s, 'options') or [] -%}
         {%- set n = o.next -%}
-        | {{ icons.get(o.mode, '') }} {{ ('_' ~ o.option ~ '_') if o.fallback else o.option }} | {{ (n.leave_in ~ ' min') if n else '—' }} | {{ n.depart[11:16] if n else '' }}{{ '' if not n or n.realtime else ' 🕒' }} | {{ n.eta[11:16] if n else '' }}{{ ' ⚠️' if n and n.on_time == false else '' }} | {{ o.later | join(', ') }} |
+        | {{ icons.get(o.mode, '') }} {{ ('_' ~ o.option ~ '_') if o.fallback else o.option }} | {{ (n.leave_in ~ ' min') if n else '—' }} | {{ n.depart[11:16] if n else '' }}{{ '' if not n or n.realtime else ' 🕒' }} | {{ n.eta[11:16] if n else '' }}{{ ' ⚠️' if n and n.on_time == false else '' }} | {{ (o.later_at or []) | join(', ') }} |
         {% endfor %}
     - type: tile
       entity: input_boolean.commute_today
