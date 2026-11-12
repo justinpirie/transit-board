@@ -140,12 +140,16 @@ def test_shared_stop_fetched_once_and_budget_fits():
 def test_shipped_config_yaml_loads(monkeypatch):
     monkeypatch.setenv("API_KEY_511", "x")
     cfg = load_config(os.path.join(os.path.dirname(__file__), "..", "transit_board_app", "default_config.yaml"))
-    # Every stop is still TODO: nothing is polled, everything waits for /setup
-    assert cfg.directions["to_office"] == [] and len(cfg.pending) == 10
-    names = [o.name for d, o in cfg.pending if d == "to_office"]
-    assert names[0] == "Ferry" and all(o.stop_query for _, o in cfg.pending)
-    bus = next(o for _, o in cfg.pending if o.name == "O bus")
-    assert (bus.buffer_minutes, bus.travel_minutes) == (2, 13)
+    # Shipped config has every stop resolved: nothing pending, all 10 options polled
+    assert cfg.pending == [] and sum(len(v) for v in cfg.directions.values()) == 10
+    office = {o.name: o for o in cfg.directions["to_office"]}
+    assert list(office)[0] == "Ferry" and office["Ferry"].stop == "7207"
+    assert (office["O bus"].buffer_minutes, office["O bus"].travel_minutes) == (2, 13)
+    assert office["Uber → West Oakland BART"].fallback
+    assert cfg.location_directions == {"home": "to_office", "office": "to_home"}
+    assert (cfg.default_arrive_by, cfg.default_home_by) == ("09:30", "18:30")
+    # budget check from the docs: a full morning is ~48 calls/hr, under 50
+    assert round(cfg.calls_per_hour("to_office")) == 48
 
 
 @pytest.mark.parametrize("hhmm,day,at,expected", [
@@ -345,11 +349,11 @@ def test_overrides_set_stop_codes_and_times(monkeypatch):
         "garbage",                        # bad: no '='
     ]))
     cfg = load_config(os.path.join(os.path.dirname(__file__), "..", "transit_board_app", "default_config.yaml"))
-    [ferry] = cfg.directions["to_office"]               # only the resolved option is polled
+    office = {o.name: o for o in cfg.directions["to_office"]}
+    ferry = office["Ferry"]
     assert (ferry.stop, ferry.travel_minutes, ferry.buffer_minutes) == ("12345", 10, 3)
     assert cfg.slack_minutes == 10
-    obus = next(o for d, o in cfg.pending if d == "to_office" and o.name == "O bus")
-    assert obus.lines == ("O", "OX")
+    assert office["O bus"].lines == ("O", "OX")
 
 
 def test_short_lineref_used_for_display():
