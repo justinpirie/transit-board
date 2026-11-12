@@ -99,7 +99,7 @@ location_directions={home: to_office, office: to_home}   # top-level setting
 Bad lines are logged and skipped; they never stop the app.
 
 ## Rate budget
-511 allows 60 calls/hr per token by default. Stops refresh per mode (bus 4 min, ferry/BART 10 min),
+511 allows 60 calls/hr per token by default. Stops refresh on their own intervals (buses 4 min, ferries and BART 15 min),
 and shared stops are fetched once. Six morning stops come to about 46 calls/hr (38 evenings) against a budget of 50.
 Background polling only runs inside commute windows, and stops when HA says you've left home or it's a WFH day.
 On HTTP 429 the app backs off for 15 min and serves cached data marked `stale`.
