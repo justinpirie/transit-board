@@ -387,3 +387,65 @@ async def test_fallback_never_sets_baseline_but_rescues():
     r = p.plan("to_office", datetime.fromtimestamp(T0, TZ) + timedelta(minutes=40))
     assert r["recommended"]["option"] == "Uber+BART"
     assert r["recommended"]["reason"] == "only the fallback arrives on time"
+
+
+# ─── Home Assistant sensor publishing ─────────────────────────────────────
+
+def mock_ha(states: dict, posted: list):
+    """Fake Core REST API: GET /states/<id> from `states` (missing → 404); record POSTs."""
+    def handler(req):
+        eid = req.url.path.rsplit("/", 1)[-1]
+        if req.method == "POST":
+            posted.append((eid, json.loads(req.content)))
+            return httpx.Response(200, json={})
+        if eid not in states:
+            return httpx.Response(404, json={"message": "Entity not found."})
+        return httpx.Response(200, json={"entity_id": eid, "state": states[eid]})
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+async def test_publish_reads_hints_and_writes_sensor():
+    from transit_board.app import build_plan
+    from transit_board.ha import Entities, HomeAssistant, publish_once
+    clk = FakeClock(T0)
+    p = Poller(make_cfg(), clock=clk, client=mock_511({"FERRY": siri([dep("SEA", 25)]),
+                                                       "O": siri([dep("O", 10)])}))
+    deadline = datetime.fromtimestamp(T0 + 90 * 60, ZoneInfo("UTC")).isoformat()  # HA timestamp sensors are UTC
+    posted = []
+    ha = HomeAssistant(mock_ha({"person.me": "home", "input_boolean.commute_today": "on",
+                                "sensor.commute_arrive_by": deadline}, posted), base="http://ha/api")
+    ent = Entities(person="person.me")
+
+    await publish_once(ha, ent, lambda **h: build_plan(p, **h))
+
+    [(eid, body)] = posted
+    assert eid == "sensor.commute_leave_in"
+    assert body["state"] == 14                                   # ferry: 25 - 8 travel - 3 buffer
+    a = body["attributes"]
+    assert a["recommended"]["option"] == "Ferry" and a["icon"] == "mdi:ferry"
+    assert a["direction"] == "to_office" and a["direction_source"] == "location:home"
+    assert a["arrive_by"] is not None                            # deadline passed through while home
+    assert (a["unit_of_measurement"], a["device_class"]) == ("min", "duration")
+    assert "next_leave_in" not in a                              # that's the state, not an attribute
+
+
+async def test_publish_with_missing_entities_and_nothing_catchable():
+    from transit_board.app import build_plan
+    from transit_board.ha import Entities, HomeAssistant, publish_once
+    p = Poller(make_cfg(), clock=FakeClock(T0), client=mock_511({}))
+    posted = []
+    # No person configured, no toggle, no calendar sensor: all hints fall back
+    ha = HomeAssistant(mock_ha({}, posted), base="http://ha/api")
+    await publish_once(ha, Entities(), lambda **h: build_plan(p, **h))
+    [(_, body)] = posted
+    assert body["state"] == "unavailable"
+    assert body["attributes"]["direction_source"] == "window"
+
+
+async def test_left_home_pauses_polling_and_drops_deadline():
+    from transit_board.ha import Entities, HomeAssistant, read_hints
+    ha = HomeAssistant(mock_ha({"person.me": "not_home", "input_boolean.commute_today": "on",
+                                "sensor.commute_arrive_by": "2026-11-10T17:55:00+00:00"}, []),
+                       base="http://ha/api")
+    h = await read_hints(ha, Entities(person="person.me"))
+    assert h == {"at": "not_home", "commute": True, "arrive_by": None}

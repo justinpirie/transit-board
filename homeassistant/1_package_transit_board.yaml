@@ -11,35 +11,9 @@
 #   • Integration: Holiday (Settings → Devices & services → Add → Holiday, US / CA)
 #   • Integration: Google Calendar for your WORK calendar → calendar.work (rename to match)
 
-rest:
-  - # GPS + calendar ride along as query params. The service uses them to:
-    #   at=home        → show to_office; at=not_home → pause 511 polling (you've left)
-    #   commute=off    → WFH / holiday: no 511 calls at all
-    #   arrive_by=…    → recommend options that get you there before your first in-person meeting
-    # arrive_by is only sent while you're home (it's about the outbound trip).
-    resource_template: >-
-      http://127.0.0.1:8099/next?at={{ states('person.you') | slugify }}&commute={{ states('input_boolean.commute_today') }}{% if is_state('person.you', 'home') and has_value('sensor.commute_arrive_by') %}&arrive_by={{ states('sensor.commute_arrive_by') | urlencode }}{% endif %}
-    scan_interval: 60
-    timeout: 15
-    sensor:
-      - name: Commute leave in
-        unique_id: transit_board_leave_in
-        # Minutes until you must walk out for the RECOMMENDED option
-        value_template: "{{ value_json.next_leave_in }}"
-        availability: "{{ value_json.next_leave_in is number }}"
-        unit_of_measurement: min
-        device_class: duration
-        state_class: measurement
-        json_attributes:
-          - direction
-          - direction_source
-          - arrive_by
-          - recommended
-          - backup
-          - options
-          - stale
-          - errors
-          - polling_paused
+# sensor.commute_leave_in is published by the Transit Board app itself
+# (v0.5.0+), which also reads person / commute_today / arrive_by directly.
+# Only the calendar-derived arrive-by sensor below still needs YAML.
 
 template:
   # Trigger-based: needs calendar.get_events' response, which the Template

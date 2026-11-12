@@ -17,6 +17,12 @@ if not key:
              "(free: https://511.org/open-data/token)")
 os.environ["API_KEY_511"] = key
 os.environ["TRANSIT_OVERRIDES"] = json.dumps(opts.get("overrides") or [])
+os.environ["TRANSIT_ENTITIES"] = json.dumps({
+    "person": opts.get("person_entity") or "",
+    "commute": opts.get("commute_entity"),
+    "arrive_by": opts.get("arrive_by_entity"),
+    "sensor": opts.get("sensor_entity") or "sensor.commute_leave_in",
+})
 
 if not os.path.exists(CONFIG):
     os.makedirs(os.path.dirname(CONFIG), exist_ok=True)

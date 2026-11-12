@@ -15,14 +15,18 @@ commute windows and time of day.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from .config import load_config
+from .ha import Entities, HomeAssistant, publish_forever
 from .poller import Poller, fetch_stop_monitoring
 from .setup import find_line, setup_report
 
@@ -36,10 +40,24 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 async def lifespan(app: FastAPI):
     poller = Poller(load_config())
     app.state.poller = poller
-    task = asyncio.create_task(poller.run_forever())
+    tasks = [asyncio.create_task(poller.run_forever())]
+
+    # Inside an HA app: publish sensor.commute_leave_in and read hints from HA.
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    ha_client = None
+    if token:
+        ha_client = httpx.AsyncClient(timeout=10, headers={"Authorization": f"Bearer {token}"})
+        ent = Entities(**{k: v for k, v in json.loads(os.environ.get("TRANSIT_ENTITIES", "{}")).items()
+                          if v is not None})
+        build = lambda **h: build_plan(poller, **h)
+        tasks.append(asyncio.create_task(publish_forever(HomeAssistant(ha_client), ent, build)))
+        logging.info("publishing %s to Home Assistant every 60s", ent.sensor)
     yield
-    task.cancel()
+    for t in tasks:
+        t.cancel()
     await poller.client.aclose()
+    if ha_client:
+        await ha_client.aclose()
 
 
 app = FastAPI(title="transit-board", lifespan=lifespan)
@@ -68,12 +86,22 @@ async def next_departures(direction: str | None = None, at: str | None = None,
                           commute: str | None = None, arrive_by: str | None = None):
     p: Poller = app.state.poller
     at = (at or "").strip().lower().replace(" ", "_") or None
-    p.set_hint(at, _bool(commute))
+    try:
+        return await build_plan(p, direction=direction, at=at, commute=_bool(commute),
+                                arrive_by=arrive_by)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+
+
+async def build_plan(p: Poller, direction: str | None = None, at: str | None = None,
+                     commute: bool | None = None, arrive_by: str | None = None) -> dict:
+    """One planning path for both /next and the HA sensor publisher."""
+    p.set_hint(at, commute)
 
     now = p.local_now()
     direction, source = p.cfg.resolve_direction(now, direction, at)
     if direction not in p.cfg.directions:
-        raise HTTPException(404, f"unknown direction {direction!r}; have {sorted(p.cfg.directions)}")
+        raise KeyError(f"unknown direction {direction!r}; have {sorted(p.cfg.directions)}")
 
     # A deadline only makes sense if it's in the future and today-ish
     deadline = _when(arrive_by, p.cfg.tz)
