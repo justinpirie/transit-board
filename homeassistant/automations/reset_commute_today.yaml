@@ -1,0 +1,14 @@
+# Home Assistant automation. Paste into Settings → Automations → Create →
+# ⋮ → Edit in YAML. Replace person.you and notify.mobile_app_your_phone with
+# your own entities (the notify action is notify.mobile_app_<your device>).
+alias: Commute – reset 'Commute today' each morning
+description: A 'No, day off' answer (or a manual toggle-off) should only last that day. Every morning the toggle goes back on; the Transit Board app then decides from the calendar, and on public holidays the ask-automation checks with you.
+mode: single
+triggers:
+- trigger: time
+  at: 04:30:00
+conditions: []
+actions:
+- action: input_boolean.turn_on
+  target:
+    entity_id: input_boolean.commute_today

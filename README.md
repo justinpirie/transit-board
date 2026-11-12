@@ -28,7 +28,27 @@ Then:
    it searches by `stop_query` and shows live lines and destinations at each candidate.
    **✓ marks the right stop and side of the street.** Put that id in `stop:` and restart the app.
    This costs about 25–35 calls, so run it outside commute windows.
-4. **HA config:** `homeassistant/` has the package (REST and calendar sensors), two automations, and the dashboard card.
+4. **Connect it to HA.** In the app's Configuration tab, set:
+   - `person_entity`: your `person.*`, for GPS. Home means the trip to the office; zone `Office` means the trip home. Once you've left, polling pauses.
+   - `work_calendars` and `holiday_calendar`: from HA's Google Calendar integration.
+5. **HA side:** follow [`homeassistant/README.md`](homeassistant/README.md): a toggle helper, an `Office` zone, five automations, and the dashboard. No `configuration.yaml` changes.
+
+## What it publishes
+
+The app writes `sensor.commute_leave_in` every 60 s:
+- **State:** minutes until you must leave for the recommended option, or `unavailable`.
+- **Attributes:** `recommended`, `backup`, `options`, `direction`, `commute_today`, `arrive_by`, `stale`,
+  `polling_paused`, and `calendar` (`reason`, `holiday`, `first_in_person`).
+
+### Calendar rules
+| Situation | Result |
+|---|---|
+| Workday | Commute (default). `arrive_by` = 5 min before the first upcoming in-person event |
+| In-person event | Location matches `in_person_location_regex`. The default matches SF rooms (`SF-<n>…`), "San Francisco", and Market St addresses. A Zoom link next to an SF room counts |
+| Public holiday | Still a commute day, but flagged as `holiday` so HA can **ask** (actionable push). Observances (e.g. Black Friday) are ignored |
+| OOO / PTO / vacation / sick / WFH | Off, when it's an all-day event or a 4h+ block |
+| Weekend | Off |
+| `input_boolean.commute_today` off | Off for the day (it resets at 04:30) |
 
 ## API
 

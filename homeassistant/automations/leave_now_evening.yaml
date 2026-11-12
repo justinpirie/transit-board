@@ -1,0 +1,58 @@
+# Home Assistant automation. Paste into Settings → Automations → Create →
+# ⋮ → Edit in YAML. Replace person.you and notify.mobile_app_your_phone with
+# your own entities (the notify action is notify.mobile_app_<your device>).
+alias: Commute – leave now (evening)
+description: 'Evening twin of ''Commute – leave now'': fires while you''re in zone.office and the Transit Board plan points home (the app maps person state ''Office'' to to_home via location_directions).'
+mode: single
+triggers:
+- trigger: numeric_state
+  entity_id: sensor.commute_leave_in
+  below: 3
+conditions:
+- condition: template
+  value_template: '{{ trigger.platform == ''numeric_state'' and trigger.from_state is not none and is_number(trigger.from_state.state) }}'
+  note: The app re-creates the sensor after an HA restart, and unavailable→number re-arms numeric_state. Only accept a real numeric drop.
+- condition: time
+  after: '15:00:00'
+  before: '20:30:00'
+  weekday:
+  - mon
+  - tue
+  - wed
+  - thu
+  - fri
+- condition: state
+  entity_id: sensor.commute_leave_in
+  attribute: commute_today
+  state: true
+  note: App combines calendar (OOO/weekend) with the Commute today toggle.
+- condition: zone
+  entity_id: person.you
+  zone: zone.office
+- condition: state
+  entity_id: sensor.commute_leave_in
+  attribute: direction
+  state: to_home
+- condition: state
+  entity_id: sensor.commute_leave_in
+  attribute: stale
+  state: false
+- condition: template
+  value_template: '{{ this.attributes.last_triggered is none or (now() - this.attributes.last_triggered).total_seconds() > 900 }}'
+  note: 'Cooldown: one push per 15 min.'
+actions:
+- variables:
+    r: '{{ state_attr(''sensor.commute_leave_in'', ''recommended'') }}'
+    b: '{{ state_attr(''sensor.commute_leave_in'', ''backup'') }}'
+- variables:
+    icon: '{{ {''ferry'': ''⛴️'', ''bus'': ''🚌'', ''bart'': ''🚇''}.get(r.mode, ''🚶'') }}'
+  note: 'Separate step: HA stores variables keys sorted, so ''icon'' must not share a block with ''r''.'
+- action: notify.mobile_app_your_phone
+  data:
+    title: '{{ icon }} Head home: {{ r.option }} {{ r.depart[11:16] }}'
+    message: '{% if r.mode == ''bart'' %}→ {{ r.dest }} train{% else %}{{ r.line }} → {{ r.dest }}{% endif %}{{ '''' if r.realtime else '' (scheduled)'' }}. Home ~{{ r.eta[11:16] }}.{% if b %} Backup: {{ b.option }} {{ b.depart[11:16] }} (leave in {{ b.leave_in }}).{% endif %}'
+    data:
+      tag: commute
+      url: /commute-board/commute
+      push:
+        interruption-level: time-sensitive

@@ -1,0 +1,46 @@
+# Home Assistant automation. Paste into Settings → Automations → Create →
+# ⋮ → Edit in YAML. Replace person.you and notify.mobile_app_your_phone with
+# your own entities (the notify action is notify.mobile_app_<your device>).
+alias: Commute – handle holiday answer
+description: Applies the answer to the holiday prompt and confirms it, replacing the original push (same tag).
+mode: queued
+triggers:
+- trigger: event
+  event_type: mobile_app_notification_action
+  event_data:
+    action: COMMUTE_YES
+  id: 'yes'
+- trigger: event
+  event_type: mobile_app_notification_action
+  event_data:
+    action: COMMUTE_NO
+  id: 'no'
+conditions: []
+actions:
+- choose:
+  - conditions:
+    - condition: trigger
+      id: 'no'
+    sequence:
+    - action: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.commute_today
+    - action: notify.mobile_app_your_phone
+      data:
+        title: 🌴 Enjoy the day off
+        message: Commute alerts paused until tomorrow.
+        data:
+          tag: commute_ask
+  - conditions:
+    - condition: trigger
+      id: 'yes'
+    sequence:
+    - action: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.commute_today
+    - action: notify.mobile_app_your_phone
+      data:
+        title: 👍 Got it, commuting
+        message: Leave-now alert as usual.
+        data:
+          tag: commute_ask

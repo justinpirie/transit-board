@@ -1,0 +1,58 @@
+# Home Assistant automation. Paste into Settings → Automations → Create →
+# ⋮ → Edit in YAML. Replace person.you and notify.mobile_app_your_phone with
+# your own entities (the notify action is notify.mobile_app_<your device>).
+alias: Commute – leave now
+description: Push the Transit Board recommendation (plus backup) when it's time to walk out. sensor.commute_leave_in already subtracts bike/walk time and the per-mode buffer (ferry/BART 3 min, bus 2 min), so below 3 means leave now.
+mode: single
+triggers:
+- trigger: numeric_state
+  entity_id: sensor.commute_leave_in
+  below: 3
+conditions:
+- condition: template
+  value_template: '{{ trigger.platform == ''numeric_state'' and trigger.from_state is not none and is_number(trigger.from_state.state) }}'
+  note: The app re-creates the sensor after an HA restart, and unavailable→number re-arms numeric_state. Only accept a real numeric drop.
+- condition: time
+  after: 06:30:00
+  before: '11:00:00'
+  weekday:
+  - mon
+  - tue
+  - wed
+  - thu
+  - fri
+- condition: state
+  entity_id: sensor.commute_leave_in
+  attribute: commute_today
+  state: true
+  note: App combines calendar (OOO/weekend) with the Commute today toggle.
+- condition: state
+  entity_id: person.you
+  state: home
+- condition: state
+  entity_id: sensor.commute_leave_in
+  attribute: direction
+  state: to_office
+- condition: state
+  entity_id: sensor.commute_leave_in
+  attribute: stale
+  state: false
+- condition: template
+  value_template: '{{ this.attributes.last_triggered is none or (now() - this.attributes.last_triggered).total_seconds() > 900 }}'
+  note: 'Cooldown: one push per 15 min.'
+actions:
+- variables:
+    r: '{{ state_attr(''sensor.commute_leave_in'', ''recommended'') }}'
+    b: '{{ state_attr(''sensor.commute_leave_in'', ''backup'') }}'
+- variables:
+    icon: '{{ {''ferry'': ''⛴️'', ''bus'': ''🚌'', ''bart'': ''🚇''}.get(r.mode, ''🚶'') }}'
+  note: 'Separate step: HA stores variables keys sorted, so ''icon'' must not share a block with ''r''.'
+- action: notify.mobile_app_your_phone
+  data:
+    title: '{{ icon }} Leave now: {{ r.option }} {{ r.depart[11:16] }}'
+    message: '{% if r.mode == ''bart'' %}→ {{ r.dest }} train{% else %}{{ r.line }} → {{ r.dest }}{% endif %}{{ '''' if r.realtime else '' (scheduled)'' }}. Arrive ~{{ r.eta[11:16] }}{% if r.on_time == false %} ⚠️ late{% endif %}.{% if b %} Backup: {{ b.option }} {{ b.depart[11:16] }} (leave in {{ b.leave_in }}).{% endif %}'
+    data:
+      tag: commute
+      url: /commute-board/commute
+      push:
+        interruption-level: time-sensitive

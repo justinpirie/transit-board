@@ -1,0 +1,44 @@
+# Commute dashboard (sections view). Settings → Dashboards → Add dashboard →
+# New dashboard from scratch, open it, ⋮ → Edit dashboard → ⋮ → Raw configuration
+# editor, and paste this. Needs sensor.commute_leave_in (published by the app)
+# and input_boolean.commute_today.
+views:
+- title: Commute
+  path: commute
+  type: sections
+  max_columns: 2
+  sections:
+  - type: grid
+    cards:
+    - type: markdown
+      entity_id:
+      - sensor.commute_leave_in
+      content: |-
+        {% set s = 'sensor.commute_leave_in' %}
+        {% set r = state_attr(s, 'recommended') %}
+        {% set cal = state_attr(s, 'calendar') or {} %}
+        {% set icons = {'ferry': '⛴️', 'bus': '🚌', 'bart': '🚇'} %}
+        ## {{ '🏢 To office' if state_attr(s, 'direction') == 'to_office' else '🏠 To home' }}{% if state_attr(s, 'stale') %} ⚠️ stale{% endif %}{% if state_attr(s, 'polling_paused') %} ⏸️{% endif %}
+
+        {% if state_attr(s, 'commute_today') == false %}
+        _Not commuting today{% if cal.reason %} ({{ cal.reason }}){% endif %}._
+        {% elif r %}
+        ### {{ icons.get(r.mode, '') }} {{ r.option }}: leave in **{{ r.leave_in }} min**
+        Departs {{ r.depart[11:16] }} · arrive ~{{ r.eta[11:16] }}{% if state_attr(s, 'arrive_by') %} · need by {{ state_attr(s, 'arrive_by')[11:16] }}{% endif %}{% if r.reason != 'preferred' %}<br>_{{ r.reason }}_{% endif %}
+        {% else %}
+        _No catchable departures right now._
+        {% endif %}
+        {% if cal.holiday %}🗓️ {{ cal.holiday }}{% endif %}{% if cal.first_in_person %} · first in person: {{ cal.first_in_person.split(' @ ')[0] }}{% endif %}
+
+        | | Option | Leave in | Departs | Arrive | Then |
+        |:-:|:--|--:|:-:|:-:|:--|
+        {% for o in state_attr(s, 'options') or [] -%}
+        {%- set n = o.next -%}
+        | {{ '★' if r and o.option == r.option else '' }} | {{ icons.get(o.mode, '') }} {{ ('_' ~ o.option ~ '_') if o.fallback else o.option }} | {{ (n.leave_in ~ ' min') if n else '—' }} | {{ n.depart[11:16] if n else '' }}{{ '' if not n or n.realtime else ' 🕒' }} | {{ n.eta[11:16] if n else '' }}{{ ' ⚠️' if n and n.on_time == false else '' }} | {{ o.later | join(', ') }} |
+        {% endfor %}
+    - type: tile
+      entity: input_boolean.commute_today
+      name: Commuting today
+      features:
+      - type: toggle
+      features_position: inline

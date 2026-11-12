@@ -14,7 +14,7 @@ switch_hour: 12
 
 location_directions:
   home: to_office
-  # office: to_home           # uncomment after creating zone.office in HA
+  office: to_home             # needs a zone named "Office" in HA (person state 'Office')
 
 # Buffers (be at the stop before departure): ferry/BART 3 min, bus 2 min (mode defaults).
 # Office-side walk times are estimates from the office. Adjust after a week.

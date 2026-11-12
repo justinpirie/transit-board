@@ -1,0 +1,39 @@
+# Home Assistant automation. Paste into Settings → Automations → Create →
+# ⋮ → Edit in YAML. Replace person.you and notify.mobile_app_your_phone with
+# your own entities (the notify action is notify.mobile_app_<your device>).
+alias: Commute – ask on public holidays
+description: Startups don't take every public holiday, so on one the commute stays ON by default and this asks. 'No, day off' turns off Commute today, which pauses 511 polling and the leave-now push for the day. No answer = commuting.
+mode: single
+triggers:
+- trigger: time
+  at: 06:15:00
+conditions:
+- condition: time
+  weekday:
+  - mon
+  - tue
+  - wed
+  - thu
+  - fri
+- condition: state
+  entity_id: input_boolean.commute_today
+  state: 'on'
+- condition: template
+  note: Calendar context is a nested attribute dict published by the Transit Board app, so no native condition can read it.
+  value_template: '{% set c = state_attr(''sensor.commute_leave_in'', ''calendar'') or {} %}{{ c.get(''holiday'') is not none and c.get(''commute_today'') == true }}'
+actions:
+- variables:
+    c: '{{ state_attr(''sensor.commute_leave_in'', ''calendar'') }}'
+- action: notify.mobile_app_your_phone
+  data:
+    title: '🗓️ {{ c.holiday }}: commuting today?'
+    message: '{% if c.first_in_person %}First in-person: {{ c.first_in_person }}. {% endif %}No answer = I''ll assume you''re going in.'
+    data:
+      tag: commute_ask
+      push:
+        interruption-level: time-sensitive
+      actions:
+      - action: COMMUTE_YES
+        title: Yes, commuting
+      - action: COMMUTE_NO
+        title: No, day off
