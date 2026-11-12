@@ -813,3 +813,59 @@ def test_clone_override_adds_an_option(monkeypatch):
     assert not hb.always_prefer and office["Ferry"].always_prefer   # clone doesn't inherit the flag
     assert [o.name for o in cfg.directions["to_office"]] == [
         "Ferry", "O bus", "W bus", "Harbor Bay ferry", "BART (Fruitvale)", "Uber → West Oakland BART"]
+
+
+# ─── Regression: 2026-11-12 morning, "leave now" fired for the 7:00 ferry ──
+# Target was 08:55; three pushes went out (06:42 Ferry 07:00, 07:07, 07:22 O bus
+# "preferred options would be late") because the live plan offered each option's
+# NEXT departure, and the 08:20 ferry was beyond 511's ~1 h live horizon.
+
+def _morning_poller(responses, sched=None, clock_min=0):
+    p = Poller(_ferry_first_cfg(), clock=FakeClock(T0 + clock_min * 60), client=mock_511(responses))
+    p.scheduled = sched or {}
+    return p
+
+
+async def test_live_offers_latest_on_time_departure_not_next():
+    # T0 = 08:00 here; deadline 09:30. Ferries at +10 and +50 (ETA +40, +80 ≤ 90)
+    p = _morning_poller({"FERRY": siri([dep("SEA", 10, "San Francisco"), dep("SEA", 50, "San Francisco")])})
+    await p.refresh("to_office")
+    r = p.plan("to_office", datetime.fromtimestamp(T0, TZ) + timedelta(minutes=90))
+    assert r["recommended"]["option"] == "Ferry" and r["recommended"]["depart"][11:16] == "08:50"
+    assert r["next_leave_in"] == 50 - 8 - 3       # no "leave now" for the 08:10 boat
+
+
+async def test_timetable_fills_in_beyond_live_horizon():
+    # Live feed only shows a ferry at +10; the on-time +50 sailing exists only in GTFS
+    sched = {"SB:FERRY": [{"line": "SEA", "line_ref": "SEA", "dest": "San Francisco", "realtime": False,
+                           "arrival_ts": T0 + 10 * 60}, {"line": "SEA", "line_ref": "SEA",
+                           "dest": "San Francisco", "realtime": False, "arrival_ts": T0 + 50 * 60}]}
+    p = _morning_poller({"FERRY": siri([dep("SEA", 10, "San Francisco")]), "O": siri([dep("O", 20)])}, sched)
+    await p.refresh("to_office")
+    r = p.plan("to_office", datetime.fromtimestamp(T0, TZ) + timedelta(minutes=90))
+    rec = r["recommended"]
+    assert (rec["option"], rec["depart"][11:16], rec["realtime"]) == ("Ferry", "08:50", False)
+    assert rec["reason"] == "preferred"            # not "preferred options would be late"
+    # the +10 scheduled sailing duplicates the live one and isn't added twice
+    ferry = r["options"][0]
+    assert ferry["later"] == []
+
+
+async def test_timetable_covers_lines_with_no_live_data():
+    # W publishes no live predictions at its stop; the timetable still offers it
+    sched = {"AC:W": [{"line": "W", "line_ref": "W", "dest": "San Francisco", "realtime": False,
+                       "arrival_ts": T0 + 30 * 60}]}
+    p = _morning_poller({"W": siri([dep("30", 16, "MLK & 11th")])}, sched)   # only line 30 live
+    await p.refresh("to_office")
+    w = next(o for o in p.plan("to_office")["options"] if o["option"] == "W bus")
+    assert w["next"]["line"] == "W" and w["next"]["realtime"] is False
+
+
+def test_default_deadline_matches_night_before_targets():
+    from transit_board.app import default_deadline
+    cfg = make_cfg(location_directions={"home": "to_office", "office": "to_home"},
+                   default_arrive_by="09:30", default_home_by="18:30")
+    at = lambda h, m: datetime(2026, 11, 12, h, m, tzinfo=TZ)
+    assert default_deadline(cfg, "to_office", at(7, 0)) == at(9, 30)
+    assert default_deadline(cfg, "to_home", at(16, 0)) == at(18, 30)
+    assert default_deadline(cfg, "to_office", at(10, 0)) is None      # already past: no deadline

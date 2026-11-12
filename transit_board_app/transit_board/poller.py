@@ -98,6 +98,9 @@ class Poller:
         self.cache = {k: Entry() for k in cfg.all_stop_keys()}
         self._locks = {k: asyncio.Lock() for k in self.cache}
         self.hint = Hint()
+        # Timetable fill-in (see _arrivals): async fn(agency, stops, day) → {stop: [deps]}
+        self.schedule_fn = None
+        self.scheduled: dict[str, list[dict]] = {}
 
     # ── time helpers ───────────────────────────────────────────────────
     def local_now(self) -> datetime:
@@ -162,11 +165,38 @@ class Poller:
             await asyncio.sleep(15)
 
     # ── planning ───────────────────────────────────────────────────────
+    async def load_schedule(self, direction: str) -> None:
+        """Pull today's timetable for a direction's stops into self.scheduled.
+        Cheap after the first call of the day (ScheduleStore caches per day)."""
+        if self.schedule_fn is None:
+            return
+        day = self.local_now().date()
+        by_agency: dict[str, set[str]] = {}
+        for o in self.cfg.directions[direction]:
+            by_agency.setdefault(o.agency, set()).add(o.stop)
+        for agency, stops in by_agency.items():
+            try:
+                for stop, deps in (await self.schedule_fn(agency, stops, day)).items():
+                    self.scheduled[f"{agency}:{stop}"] = deps
+            except Exception as e:
+                log.warning("timetable for %s unavailable: %s", agency, e)
+
+    def _arrivals(self, opt: Option, now: float) -> list[dict]:
+        """Live predictions, plus timetable departures beyond them.
+
+        511's live feed only looks ~1 h ahead, and some lines (e.g. AC's
+        peak-only W) publish no live predictions at all. For each option, any
+        scheduled departure later than its last live prediction is added (marked
+        realtime=False), so a later on-time departure is still visible."""
+        live = [a for a in self.cache[opt.stop_key].arrivals if opt.accepts(a)]
+        horizon = max((a["arrival_ts"] for a in live), default=now) + 60
+        sched = [a for a in self.scheduled.get(opt.stop_key, [])
+                 if a["arrival_ts"] > horizon and opt.accepts(a)]
+        return live + sched
+
     def _departures(self, opt: Option, now: float) -> list[dict]:
         out = []
-        for a in self.cache[opt.stop_key].arrivals:
-            if not opt.accepts(a):
-                continue
+        for a in self._arrivals(opt, now):
             mins = int((a["arrival_ts"] - now) // 60)
             leave_in = mins - opt.travel_minutes - opt.buffer_minutes
             if leave_in < 0:
@@ -192,10 +222,19 @@ class Poller:
             deps = self._departures(opt, now)
             for d in deps:
                 d["on_time"] = None if deadline is None else d["_eta_ts"] <= deadline
+            # With a deadline, offer each option's LATEST on-time departure (leave as
+            # late as possible), not its next one. Otherwise "leave now" fires for every
+            # earlier departure: e.g. a 7:00 ferry when you need to be in by 8:55.
+            # Without one, or if nothing is on time, the next departure.
+            pick_i = 0
+            if deadline is not None:
+                on_time = [i for i, d in enumerate(deps) if d["on_time"]]
+                if on_time:
+                    pick_i = on_time[-1]
             options.append({"option": opt.name, "mode": opt.mode, "priority": opt.priority,
                             "fallback": opt.fallback, "always_prefer": opt.always_prefer,
-                            "next": deps[0] if deps else None,
-                            "later": [d["leave_in"] for d in deps[1:3]]})
+                            "next": deps[pick_i] if deps else None,
+                            "later": [d["leave_in"] for d in deps[pick_i + 1:pick_i + 3]]})
 
         rec, reason = self._recommend(options, deadline)
         # Backup = what the same logic would pick if the recommendation vanished

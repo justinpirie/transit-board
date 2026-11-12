@@ -67,6 +67,7 @@ async def lifespan(app: FastAPI):
         app.state.tomorrow = lambda now: build_tomorrow(poller.cfg, store.departures, now, rules,
                                                         ha.get_events)
         app.state.schedule = store
+        poller.schedule_fn = store.departures
         tasks.append(asyncio.create_task(publish_forever(
             ha, ent, build, CalendarCache(rules), poller.local_now)))
         tasks.append(asyncio.create_task(tomorrow_forever(
@@ -113,6 +114,18 @@ async def next_departures(direction: str | None = None, at: str | None = None,
         raise HTTPException(404, str(e))
 
 
+def default_deadline(cfg, direction: str, now: datetime) -> datetime | None:
+    """Same defaults as the night-before plan: be at the office by
+    default_arrive_by, home by default_home_by, while those are still ahead."""
+    origin = cfg.origin_zone(direction)
+    hhmm = {"home": cfg.default_arrive_by, "office": cfg.default_home_by}.get(origin or "")
+    if not hhmm:
+        return None
+    h, m = (int(x) for x in hhmm.split(":"))
+    t = now.replace(hour=h, minute=m, second=0, microsecond=0)
+    return t if t > now else None
+
+
 async def build_plan(p: Poller, direction: str | None = None, at: str | None = None,
                      commute: bool | None = None, arrive_by: str | None = None) -> dict:
     """One planning path for both /next and the HA sensor publisher."""
@@ -127,11 +140,14 @@ async def build_plan(p: Poller, direction: str | None = None, at: str | None = N
     deadline = _when(arrive_by, p.cfg.tz)
     if deadline and not (0 < (deadline - now).total_seconds() < 6 * 3600):
         deadline = None
+    if deadline is None:
+        deadline = default_deadline(p.cfg, direction, now)
 
     # Lazy refresh outside windows; inside, the background loop already did the work
     in_window = p.cfg.active_window(now) is not None
     if p.should_poll(direction) or not in_window:
         await p.refresh(direction, lazy=not in_window)
+    await p.load_schedule(direction)
     return {**p.plan(direction, deadline), "direction_source": source}
 
 
