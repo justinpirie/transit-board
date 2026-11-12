@@ -26,7 +26,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from .config import load_config
-from .ha import Entities, HomeAssistant, publish_forever
+from .calendar_ctx import CalendarRules
+from .ha import CalendarCache, Entities, HomeAssistant, publish_forever
 from .poller import Poller, fetch_stop_monitoring
 from .setup import find_line, setup_report
 
@@ -50,7 +51,13 @@ async def lifespan(app: FastAPI):
         ent = Entities(**{k: v for k, v in json.loads(os.environ.get("TRANSIT_ENTITIES", "{}")).items()
                           if v is not None})
         build = lambda **h: build_plan(poller, **h)
-        tasks.append(asyncio.create_task(publish_forever(HomeAssistant(ha_client), ent, build)))
+        c = json.loads(os.environ.get("TRANSIT_CALENDAR", "{}"))
+        rules = CalendarRules(**{k: v for k, v in c.items() if v}) if c.get("work_calendars") else None
+        if rules:
+            logging.info("reading calendars %s (holidays: %s)", rules.work_calendars,
+                         rules.holiday_calendar or "none")
+        tasks.append(asyncio.create_task(publish_forever(
+            HomeAssistant(ha_client), ent, build, CalendarCache(rules), poller.local_now)))
         logging.info("publishing %s to Home Assistant every 60s", ent.sensor)
     yield
     for t in tasks:

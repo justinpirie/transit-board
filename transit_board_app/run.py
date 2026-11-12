@@ -23,6 +23,12 @@ os.environ["TRANSIT_ENTITIES"] = json.dumps({
     "arrive_by": opts.get("arrive_by_entity"),
     "sensor": opts.get("sensor_entity") or "sensor.commute_leave_in",
 })
+os.environ["TRANSIT_CALENDAR"] = json.dumps({
+    "work_calendars": opts.get("work_calendars") or [],
+    "holiday_calendar": opts.get("holiday_calendar") or "",
+    "in_person": opts.get("in_person_location_regex") or "",
+    "off_day": opts.get("off_day_title_regex") or "",
+})
 
 if not os.path.exists(CONFIG):
     os.makedirs(os.path.dirname(CONFIG), exist_ok=True)

@@ -21,8 +21,11 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 import httpx
+
+from .calendar_ctx import CalendarRules, calendar_context
 
 log = logging.getLogger("transit_board")
 
@@ -55,23 +58,67 @@ class HomeAssistant:
         s = r.json().get("state")
         return None if s in (None, "unknown", "unavailable", "") else s
 
+    async def get_events(self, entity_ids: list[str], start, end) -> dict[str, list[dict]]:
+        """calendar.get_events through the REST API (needs ?return_response)."""
+        r = await self.client.post(
+            f"{self.base}/services/calendar/get_events?return_response",
+            json={"entity_id": entity_ids, "start_date_time": start.isoformat(),
+                  "end_date_time": end.isoformat()})
+        r.raise_for_status()
+        resp = r.json().get("service_response", {})
+        return {k: v.get("events", []) for k, v in resp.items()}
+
     async def set_state(self, entity_id: str, state, attributes: dict) -> None:
         r = await self.client.post(f"{self.base}/states/{entity_id}",
                                    json={"state": state, "attributes": attributes})
         r.raise_for_status()
 
 
-async def read_hints(ha: HomeAssistant, ent: Entities) -> dict:
-    """Collect the same hints the old REST sensor sent as query params."""
-    person, commute, arrive_by = await asyncio.gather(
+class CalendarCache:
+    """Calendar context, recomputed at most every 10 min (Google sync is slower anyway)."""
+    def __init__(self, rules: CalendarRules | None, ttl: float = 600):
+        self.rules, self.ttl = rules, ttl
+        self.ctx: dict | None = None
+        self.at: float = 0.0
+
+    async def get(self, ha: HomeAssistant, now: datetime) -> dict | None:
+        if not self.rules or not self.rules.work_calendars:
+            return None
+        if self.ctx is None or now.timestamp() - self.at > self.ttl:
+            cals = self.rules.work_calendars + ([self.rules.holiday_calendar]
+                                                if self.rules.holiday_calendar else [])
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            events = await ha.get_events(cals, start, start + timedelta(days=1))
+            self.ctx, self.at = calendar_context(events, self.rules, now), now.timestamp()
+        return self.ctx
+
+
+async def read_hints(ha: HomeAssistant, ent: Entities, cal: CalendarCache | None = None,
+                     now: datetime | None = None) -> tuple[dict, dict | None]:
+    """Collect hints: GPS, the manual toggle, and (if configured) calendar context.
+
+    The calendar decides whether today is a commute day; the "Commuting today"
+    toggle, if it exists and is OFF, overrides it (e.g. a sick day the calendar
+    doesn't know about)."""
+    person, toggle, arrive_by = await asyncio.gather(
         ha.state(ent.person), ha.state(ent.commute), ha.state(ent.arrive_by))
+    ctx = None
+    if cal is not None and now is not None:
+        try:
+            ctx = await cal.get(ha, now)
+        except Exception as e:
+            log.warning("calendar read failed: %s", e)
+
+    commute = None if toggle is None else toggle == "on"
+    if ctx is not None:
+        commute = ctx["commute_today"] and commute is not False
+        arrive_by = ctx["arrive_by"]
     return {
         "at": slugify(person) if person else None,
-        "commute": None if commute is None else commute == "on",
-        # Like the old REST sensor: a deadline only applies to the outbound trip,
-        # i.e. while you're still home.
+        "commute": commute,
+        # A deadline only applies to the outbound trip, i.e. while you're home.
         "arrive_by": arrive_by if person == "home" else None,
-    }
+    }, ctx
 
 
 def sensor_payload(plan: dict, ent: Entities) -> tuple[object, dict]:
@@ -90,18 +137,22 @@ def sensor_payload(plan: dict, ent: Entities) -> tuple[object, dict]:
     return state, attrs
 
 
-async def publish_once(ha: HomeAssistant, ent: Entities, build_plan) -> dict:
-    hints = await read_hints(ha, ent)
+async def publish_once(ha: HomeAssistant, ent: Entities, build_plan,
+                       cal: CalendarCache | None = None, now: datetime | None = None) -> dict:
+    hints, ctx = await read_hints(ha, ent, cal, now)
     plan = await build_plan(**hints)
     state, attrs = sensor_payload(plan, ent)
+    attrs["commute_today"] = hints["commute"]
+    attrs["calendar"] = ctx      # reason / first_in_person, for the card and debugging
     await ha.set_state(ent.sensor, state, attrs)
     return plan
 
 
-async def publish_forever(ha: HomeAssistant, ent: Entities, build_plan, every: float = 60) -> None:
+async def publish_forever(ha: HomeAssistant, ent: Entities, build_plan,
+                          cal: CalendarCache | None = None, now_fn=None, every: float = 60) -> None:
     while True:
         try:
-            await publish_once(ha, ent, build_plan)
+            await publish_once(ha, ent, build_plan, cal, now_fn() if now_fn else None)
         except Exception as e:  # HA restarting, network blip: try again next tick
             log.warning("publish to Home Assistant failed: %s", e)
         await asyncio.sleep(every)

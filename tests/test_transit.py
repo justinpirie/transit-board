@@ -447,5 +447,105 @@ async def test_left_home_pauses_polling_and_drops_deadline():
     ha = HomeAssistant(mock_ha({"person.me": "not_home", "input_boolean.commute_today": "on",
                                 "sensor.commute_arrive_by": "2026-11-10T17:55:00+00:00"}, []),
                        base="http://ha/api")
-    h = await read_hints(ha, Entities(person="person.me"))
+    h, _ = await read_hints(ha, Entities(person="person.me"))
     assert h == {"at": "not_home", "commute": True, "arrive_by": None}
+
+
+# ─── Calendar context (synthetic events shaped like a multi-office calendar) ─
+
+from transit_board.calendar_ctx import CalendarRules, calendar_context
+
+WORK, HOL = "calendar.work", "calendar.holidays"
+RULES = CalendarRules(work_calendars=[WORK], holiday_calendar=HOL)
+TUE_0700 = datetime(2026, 11, 10, 7, 0, tzinfo=TZ)
+
+
+def ev(summary, start, end=None, location=None, description=None):
+    e = {"summary": summary, "start": start, "end": end or start}
+    if location: e["location"] = location
+    if description: e["description"] = description
+    return e
+
+
+def test_hybrid_sf_room_counts_other_office_rooms_dont():
+    events = {WORK: [
+        ev("Standup", "2026-11-10T09:00:00-08:00", location="https://zoom.us/j/1"),
+        ev("Planning", "2026-11-10T10:00:00-08:00", location="NYC-2-Room (8) [VC], LON-1-Room (4) [VC]"),
+        ev("Brainstorm", "2026-11-10T11:00:00-08:00",
+           location="https://zoom.us/j/2, NYC-6-Room (8) [VC], SF-10-Room (6) [VC]"),
+    ]}
+    c = calendar_context(events, RULES, TUE_0700)
+    assert c["commute_today"] is True
+    assert c["arrive_by"] == "2026-11-10T10:55:00-08:00"          # 5 min before the hybrid SF meeting
+    assert c["first_in_person"].startswith("11:00 Brainstorm")
+
+
+def test_sf_addresses_count_and_past_events_skipped():
+    events = {WORK: [
+        ev("Breakfast", "2026-11-10T06:30:00-08:00", location="1 Main St, San Francisco, CA"),  # already started
+        ev("Offsite", "2026-11-10T09:00:00-08:00", location="Studio at 500 Market: short walk"),
+    ]}
+    assert calendar_context(events, RULES, TUE_0700)["arrive_by"] == "2026-11-10T08:55:00-08:00"
+
+
+def test_public_holiday_is_flagged_not_off_and_observance_ignored():
+    hol = {HOL: [ev("Veterans Day", "2026-11-10", "2026-11-11", description="Public holiday")]}
+    c = calendar_context(hol, RULES, TUE_0700)
+    # Startup default: still a commute day; the holiday is flagged so HA can ask
+    assert (c["commute_today"], c["holiday"]) == (True, "Veterans Day")
+    assert "ask" in c["reason"]
+    obs = {HOL: [ev("Black Friday", "2026-11-10", "2026-11-11", description="Observance\nTo hide observances")]}
+    c = calendar_context(obs, RULES, TUE_0700)
+    assert (c["commute_today"], c["holiday"]) == (True, None)
+    # OOO on a holiday is still off, and nobody needs asking
+    ooo = {**hol, WORK: [ev("OOO", "2026-11-10", "2026-11-11")]}
+    assert calendar_context(ooo, RULES, TUE_0700)["commute_today"] is False
+
+
+def test_ooo_needs_all_day_or_long_block():
+    short = {WORK: [ev("PTO planning", "2026-11-10T09:00:00-08:00", "2026-11-10T09:30:00-08:00")]}
+    assert calendar_context(short, RULES, TUE_0700)["commute_today"] is True
+    allday = {WORK: [ev("OOO", "2026-11-09", "2026-11-12")]}               # multi-day, covers today
+    assert calendar_context(allday, RULES, TUE_0700)["commute_today"] is False
+    long = {WORK: [ev("Out of office", "2026-11-10T08:00:00-08:00", "2026-11-10T17:00:00-08:00")]}
+    assert calendar_context(long, RULES, TUE_0700)["commute_today"] is False
+
+
+def test_weekend_is_not_a_commute_day():
+    sat = datetime(2026, 11, 14, 8, 0, tzinfo=TZ)
+    assert calendar_context({WORK: []}, RULES, sat)["reason"] == "weekend"
+
+
+async def test_publish_uses_calendar_and_toggle_can_veto():
+    from transit_board.app import build_plan
+    from transit_board.ha import CalendarCache, Entities, HomeAssistant, publish_once
+    clk = FakeClock(T0)                                            # Tue 08:00
+    p = Poller(make_cfg(), clock=clk, client=mock_511({"O": siri([dep("O", 10)])}))
+    posted, toggle = [], {"state": "on"}
+
+    def handler(req):
+        if req.url.path.endswith("/services/calendar/get_events"):
+            assert "return_response" in str(req.url)
+            return httpx.Response(200, json={"changed_states": [], "service_response": {
+                WORK: {"events": [ev("Design review", "2026-11-10T09:30:00-08:00", location="SF-4-Room (6)")]},
+                HOL: {"events": []}}})
+        eid = req.url.path.rsplit("/", 1)[-1]
+        if req.method == "POST":
+            posted.append(json.loads(req.content)); return httpx.Response(200, json={})
+        states = {"person.me": "home", "input_boolean.commute_today": toggle["state"]}
+        return (httpx.Response(200, json={"state": states[eid]}) if eid in states
+                else httpx.Response(404, json={}))
+
+    ha = HomeAssistant(httpx.AsyncClient(transport=httpx.MockTransport(handler)), base="http://ha/api")
+    cal = CalendarCache(RULES)
+    now = datetime.fromtimestamp(T0, TZ)
+    await publish_once(ha, Entities(person="person.me"), lambda **h: build_plan(p, **h), cal, now)
+    a = posted[-1]["attributes"]
+    assert a["commute_today"] is True and a["arrive_by"] == "2026-11-10T09:25-08:00"
+    assert a["calendar"]["first_in_person"].startswith("09:30 Design review")
+    assert a["polling_paused"] is False
+
+    toggle["state"] = "off"                                        # sick day the calendar doesn't know
+    await publish_once(ha, Entities(person="person.me"), lambda **h: build_plan(p, **h), cal, now)
+    a = posted[-1]["attributes"]
+    assert a["commute_today"] is False and a["polling_paused"] is True

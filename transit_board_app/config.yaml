@@ -1,6 +1,6 @@
 # Home Assistant app manifest (this is NOT the commute config; see default_config.yaml)
 name: Transit Board
-version: "0.5.0"
+version: "0.6.1"
 slug: transit_board
 description: Real-time Bay Area commute planner (511.org) for Home Assistant
 url: https://github.com/justinpirie/transit-board
@@ -39,6 +39,14 @@ options:
   commute_entity: input_boolean.commute_today
   arrive_by_entity: sensor.commute_arrive_by
   sensor_entity: sensor.commute_leave_in
+  # Calendars (from HA's Google Calendar integration). Work calendars decide
+  # in-person meetings and OOO days; the holiday calendar's public holidays
+  # turn the commute off. Leave work_calendars empty to skip calendar logic.
+  work_calendars: []
+  holiday_calendar: ""
+  # Empty = built-in defaults (SF rooms/addresses; OOO/PTO/vacation/sick/WFH)
+  in_person_location_regex: ""
+  off_day_title_regex: ""
 schema:
   api_key: password
   overrides:
@@ -47,3 +55,8 @@ schema:
   commute_entity: str?
   arrive_by_entity: str?
   sensor_entity: str?
+  work_calendars:
+    - str
+  holiday_calendar: str?
+  in_person_location_regex: str?
+  off_day_title_regex: str?
