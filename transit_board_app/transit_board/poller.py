@@ -193,7 +193,7 @@ class Poller:
             for d in deps:
                 d["on_time"] = None if deadline is None else d["_eta_ts"] <= deadline
             options.append({"option": opt.name, "mode": opt.mode, "priority": opt.priority,
-                            "fallback": opt.fallback,
+                            "fallback": opt.fallback, "always_prefer": opt.always_prefer,
                             "next": deps[0] if deps else None,
                             "later": [d["leave_in"] for d in deps[1:3]]})
 
@@ -237,6 +237,13 @@ class Poller:
         # a pricey Uber arriving first would knock the ferry out of the slack window.
         primary = [o for o in live if not o.get("fallback")]
         fallbacks = [o for o in live if o.get("fallback")]
+
+        # "Always prefer" options (the ferry) win whenever they work: catchable,
+        # and on time if there's a deadline. No slack window applies to them.
+        favs = [o for o in primary if o.get("always_prefer")
+                and (deadline is None or o["next"]["_eta_ts"] <= deadline)]
+        if favs:
+            return min(favs, key=rank), "preferred"
 
         if deadline is not None:
             for pool, why_pool in ((primary, None), (fallbacks, "only the fallback arrives on time")):

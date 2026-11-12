@@ -11,9 +11,10 @@ For each leg, every option's departures are turned into
     eta      = departure + ride + egress
 and for each option we keep its LATEST departure that's still on time (leave
 as late as possible). Then the same preference rules as the live plan apply:
-regular options before fallbacks, and the most-preferred option wins unless
-you'd have to leave more than `slack_minutes` earlier than with the
-latest-leaving on-time option. With no on-time option at all, it picks the
+regular options before fallbacks; an `always_prefer` option (the ferry) wins
+whenever it's on time; otherwise the most-preferred option wins unless you'd
+have to leave more than `slack_minutes` earlier than with the latest-leaving
+on-time option. With no on-time option at all, it picks the
 earliest arrival and says how late.
 """
 from __future__ import annotations
@@ -66,7 +67,10 @@ def plan_leg(options: list[Option], deps: dict[str, list[dict]], deadline: datet
     on_time = [c for c in cands if c["on_time"]]
     primary = [c for c in on_time if not c["opt"].fallback]
     fallback = [c for c in on_time if c["opt"].fallback]
-    if primary:
+    favs = [c for c in primary if c["opt"].always_prefer]
+    if favs:      # e.g. the ferry: wins whenever it's on time, regardless of slack
+        rec, reason = min(favs, key=lambda c: (c["opt"].priority, -c["leave"])), "preferred"
+    elif primary:
         rec, reason = pick(primary), "preferred"
     elif fallback:
         rec, reason = pick(fallback), "only the fallback arrives on time"

@@ -755,3 +755,57 @@ def test_line_stops_lists_a_lines_stops(tmp_path):
         z.writestr("stops.txt", "stop_id,stop_name\nA,Central Av & 8th St\nB,Transit Center Bay 22\nC,Central Av & 9th St\n")
     r = line_stops(_zip.ZipFile(p), "W", WED, "central")
     assert [(s["stop"], s["name"], s["headsigns"]) for s in r] == [("A", "Central Av & 8th St", ["San Francisco"])]
+
+
+# ─── "Always prefer the ferry" + adding options via overrides ─────────────
+
+def _ferry_first_cfg():
+    cfg = make_cfg()
+    f = cfg.directions["to_office"][0]
+    cfg.directions["to_office"][0] = _option({"name": f.name, "mode": "ferry", "priority": 1, "agency": "SB",
+        "stop": "FERRY", "travel_minutes": 8, "ride_minutes": 20, "egress_minutes": 10, "always_prefer": True})
+    return cfg
+
+
+async def test_always_prefer_ferry_beats_a_much_sooner_bus():
+    # Ferry in 70 min (ETA +100) vs O in 10 (ETA +58): 42 min worse, way past the 15-min slack
+    p = Poller(_ferry_first_cfg(), clock=FakeClock(T0),
+               client=mock_511({"FERRY": siri([dep("SEA", 70)]), "O": siri([dep("O", 10)])}))
+    await p.refresh("to_office")
+    r = p.plan("to_office")
+    assert r["recommended"]["option"] == "Ferry" and r["backup"]["option"] == "O bus"
+    # ...unless it would make you late for a deadline
+    r = p.plan("to_office", datetime.fromtimestamp(T0, TZ) + timedelta(minutes=80))
+    assert r["recommended"]["option"] == "O bus"
+
+
+def test_always_prefer_in_night_before_plan():
+    from transit_board.tomorrow import plan_leg
+    opts = _ferry_first_cfg().directions["to_office"]
+    deadline = datetime(2026, 11, 12, 9, 0, tzinfo=TZ)
+    deps = _sched(("SB:FERRY", "SEA", "SF", [60]),        # 07:00: leave 06:49, ETA 07:30
+                  ("BA:FTVL", "G", "Daly City", [130]))   # 08:10: leave 07:55
+    r = plan_leg(opts, deps, deadline, deadline - timedelta(hours=4), 15, TZ)
+    assert (r["option"], r["leave_at"][11:16]) == ("Ferry", "06:49")   # 66 min earlier, still the ferry
+
+
+def test_clone_override_adds_an_option(monkeypatch):
+    import json as _json
+    monkeypatch.setenv("API_KEY_511", "x")
+    monkeypatch.setenv("TRANSIT_OVERRIDES", _json.dumps([
+        "to_office/Harbor Bay ferry.clone=Ferry",
+        "to_office/Harbor Bay ferry.stop=7206",
+        "to_office/Harbor Bay ferry.priority=3",
+        "to_office/BART (Fruitvale).priority=4",
+        "to_office/Uber → West Oakland BART.priority=5",
+        "to_office/Harbor Bay ferry.travel_minutes=27",
+        "to_office/Ferry.always_prefer=true",
+        "to_office/Harbor Bay ferry.clone=Nope",          # bad source → logged, ignored
+    ]))
+    cfg = load_config(os.path.join(os.path.dirname(__file__), "..", "transit_board_app", "default_config.yaml"))
+    office = {o.name: o for o in cfg.directions["to_office"]}
+    hb = office["Harbor Bay ferry"]
+    assert (hb.stop, hb.priority, hb.travel_minutes, hb.mode, hb.buffer_minutes) == ("7206", 3, 27, "ferry", 3)
+    assert not hb.always_prefer and office["Ferry"].always_prefer   # clone doesn't inherit the flag
+    assert [o.name for o in cfg.directions["to_office"]] == [
+        "Ferry", "O bus", "W bus", "Harbor Bay ferry", "BART (Fruitvale)", "Uber → West Oakland BART"]

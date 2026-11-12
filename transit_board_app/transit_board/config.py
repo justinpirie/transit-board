@@ -49,6 +49,7 @@ class Option:
     dest_match: tuple[str, ...] = ()  # allow-list: substring of destination (case-insensitive)
     stop_query: str = ""              # words to find the stop by name (used by /setup)
     fallback: bool = False            # last resort (e.g. Uber): never sets the "fastest" baseline
+    always_prefer: bool = False       # wins whenever it works, ignoring the slack window
 
     @property
     def stop_key(self) -> str:
@@ -156,6 +157,7 @@ def _option(raw: dict) -> Option:
         dest_match=tuple(str(x) for x in d.get("dest_match", [])),
         stop_query=str(d.get("stop_query", "")),
         fallback=bool(d.get("fallback", False)),
+        always_prefer=bool(d.get("always_prefer", False)),
     )
 
 
@@ -170,6 +172,7 @@ def apply_overrides(raw: dict, overrides: list[str]) -> list[str]:
         slack_minutes=10                    top-level setting
         to_office/Ferry.stop=12345          option field (option matched by name)
         to_office/Ferry.lines=O,OX          comma list for lines / dest_match
+        to_office/HB ferry.clone=Ferry      add an option: copy "Ferry" as "HB ferry"
 
     Values are parsed as YAML scalars ("10" → 10). Returns error strings for
     bad entries instead of raising: one typo shouldn't stop the app."""
@@ -189,6 +192,15 @@ def apply_overrides(raw: dict, overrides: list[str]) -> list[str]:
             continue
         opts = (raw.get("directions") or {}).get(direction) or []
         target = next((o for o in opts if o.get("name") == name), None)
+        if field_name == "clone":
+            # Add an option without editing config.yaml: copy `value` under the new
+            # name, then later overrides set its stop, priority, times...
+            src = next((o for o in opts if o.get("name") == value), None)
+            if src is None:
+                errors.append(f"{item!r}: no option named {value!r} to clone in {direction!r}")
+            elif target is None:
+                opts.append({**src, "name": name, "always_prefer": False})
+            continue
         if target is None:
             errors.append(f"{item!r}: no option named {name!r} in {direction!r}")
             continue
