@@ -21,12 +21,20 @@ exported from a working install.
 |------|-------|------|
 | `leave_now_morning.yaml` | sensor drops below 3 min, weekdays 06:30–11:00, at home | "Leave now" push with the recommendation and backup |
 | `leave_now_evening.yaml` | same, 15:00–20:30, in `zone.office` | "Head home" push |
+| `tomorrow_plan_night_before.yaml` | 20:30 daily, if tomorrow is a commute day | Tomorrow's plan from `sensor.commute_tomorrow`: when to leave, which mode, backup; same for getting home |
 | `reset_commute_today.yaml` | 04:30 daily | Turns `Commute today` back on, so a "day off" lasts one day |
 | `ask_on_public_holidays.yaml` | 06:15 weekdays, if today is a public holiday | Actionable push: commuting today? (no answer = yes) |
 | `handle_holiday_answer.yaml` | a button on that push | Sets the toggle and confirms |
 
 Pushes are iOS `time-sensitive`, and share a `tag` so they replace each other
 rather than stacking.
+
+## Sensors the app publishes
+
+| Entity | State | Notes |
+|---|---|---|
+| `sensor.commute_leave_in` | minutes until you must leave (live, every 60 s) | from 511 real-time predictions |
+| `sensor.commute_tomorrow` | timestamp: when to leave tomorrow morning | from GTFS timetables + calendars; recomputed every 30 min from 15:00. Attributes `morning` / `evening` (option, leave_at, depart, eta, target, backup), `holiday`, `first_in_person`, `home_event` |
 
 ## Gotchas these configs already handle
 

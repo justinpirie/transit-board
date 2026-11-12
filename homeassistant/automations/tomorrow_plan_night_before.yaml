@@ -1,0 +1,37 @@
+# Home Assistant automation. Paste into Settings → Automations → Create →
+# ⋮ → Edit in YAML. Replace notify.mobile_app_your_phone with your own.
+alias: Commute – tomorrow's plan (night before)
+description: 'At 20:30, push tomorrow''s plan from sensor.commute_tomorrow (Transit Board: GTFS timetables + calendars): when to leave in the morning and by which mode to make the first in-person meeting (or default arrival time), and when to leave the office to be home on time. Skipped when tomorrow isn''t a commute day.'
+mode: single
+triggers:
+- trigger: time
+  at: '20:30:00'
+conditions:
+- condition: state
+  entity_id: sensor.commute_tomorrow
+  attribute: commute
+  state: true
+- condition: template
+  note: Plan must be for tomorrow (not a stale one from an earlier day) and have a morning leg.
+  value_template: '{{ state_attr(''sensor.commute_tomorrow'', ''date'') == (now() + timedelta(days=1)).date().isoformat() and state_attr(''sensor.commute_tomorrow'', ''morning'') is not none }}'
+actions:
+- variables:
+    m: '{{ state_attr(''sensor.commute_tomorrow'', ''morning'') }}'
+    e: '{{ state_attr(''sensor.commute_tomorrow'', ''evening'') }}'
+    hol: '{{ state_attr(''sensor.commute_tomorrow'', ''holiday'') }}'
+    fip: '{{ state_attr(''sensor.commute_tomorrow'', ''first_in_person'') }}'
+    home_event: '{{ state_attr(''sensor.commute_tomorrow'', ''home_event'') }}'
+- variables:
+    icons: '{{ {''ferry'': ''⛴️'', ''bus'': ''🚌'', ''bart'': ''🚇''} }}'
+  note: 'Separate step: HA stores variables keys sorted.'
+- action: notify.mobile_app_your_phone
+  data:
+    title: '🌙 Tomorrow: leave {{ m.leave_at[11:16] }} · {{ icons.get(m.mode, '''') }} {{ m.option }}{% if hol %} ({{ hol }}){% endif %}'
+    message: '{% if hol %}🗓️ {{ hol }}: I''ll ask at 6:15. If you go in:
+
+      {% endif %}🌅 {{ m.option }} {{ m.depart[11:16] }} → in by {{ m.eta[11:16] }}{% if fip and m.target[11:16] < ''09:30'' %} for {{ fip.split('' @ '')[0] }}{% endif %}{% if not m.on_time %} ⚠️ {{ m.reason }}{% endif %}.{% if m.backup %} Backup: {{ m.backup.option }}, leave {{ m.backup.leave_at[11:16] }}.{% endif %}{% if e %}
+
+      🌆 Home: leave office {{ e.leave_at[11:16] }} · {{ icons.get(e.mode, '''') }} {{ e.option }} {{ e.depart[11:16] }} → home {{ e.eta[11:16] }}{% if home_event %} for {{ home_event }}{% endif %}{% if not e.on_time %} ⚠️ {{ e.reason }}{% endif %}.{% if e.backup %} Backup: {{ e.backup.option }}, leave {{ e.backup.leave_at[11:16] }}.{% endif %}{% endif %}'
+    data:
+      tag: commute_tomorrow
+      url: /commute-board/commute

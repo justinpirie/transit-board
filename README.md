@@ -40,6 +40,19 @@ The app writes `sensor.commute_leave_in` every 60 s:
 - **Attributes:** `recommended`, `backup`, `options`, `direction`, `commute_today`, `arrive_by`, `stale`,
   `polling_paused`, and `calendar` (`reason`, `holiday`, `first_in_person`).
 
+### Night before: `sensor.commute_tomorrow`
+511's live feed only covers about the next hour, and its StopTimetable API only works for
+"timepoint" stops (other stops return HTTP 412). So tomorrow's plan comes from each agency's **GTFS**
+feed, downloaded at most weekly (1 API call each) and cached in `/data/gtfs`.
+- **Morning target:** your first in-person meeting minus 5 min, capped at `default_arrive_by` (09:30).
+- **Evening target:** your first evening event matching `home_location_regex` minus 10 min, capped at `default_home_by` (18:30).
+- **Per option:** the planner takes the latest departure that still meets the target (leave as late as
+  possible), then applies the live plan's rules: priority order, fallbacks last, 15-min slack.
+
+The GTFS reader drops arrivals at terminals, which can't be boarded (a ferry dock lists both directions),
+and when a feed has no headsigns (SF Bay Ferry's doesn't) it uses the trip's last stop as the destination.
+Debug endpoints: `/tomorrow`, `/schedule?agency=SB&stop=7207&after=06:00`, `/line_stops?agency=AC&line=W&q=central`.
+
 ### Calendar rules
 | Situation | Result |
 |---|---|
@@ -60,6 +73,8 @@ The app writes `sensor.commute_leave_in` every 60 s:
 | `&commute=off` | WFH or holiday: no background 511 calls |
 | `&arrive_by=2026-11-12T10:55` | Calendar deadline: picks the most-preferred option that arrives **on time** |
 | `GET /setup` | Stop-code finder (plain text) |
+| `GET /tomorrow` | Tomorrow's plan, computed now |
+| `GET /schedule`, `/line_stops` | GTFS timetable lookups (no API calls once cached) |
 | `GET /peek?agency=AC&stop=55555` | Live, unfiltered departures at one stop |
 | `GET /health` | Budget used, expected calls/hr, missing stop codes, last HA hint |
 
