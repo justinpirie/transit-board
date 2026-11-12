@@ -1,6 +1,6 @@
 # Home Assistant app manifest (this is NOT the commute config; see default_config.yaml)
 name: Transit Board
-version: "0.6.1"
+version: "0.6.2"
 slug: transit_board
 description: Real-time Bay Area commute planner (511.org) for Home Assistant
 url: https://github.com/justinpirie/transit-board

@@ -18,17 +18,19 @@ import asyncio
 import json
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from .config import load_config
 from .calendar_ctx import CalendarRules
 from .ha import CalendarCache, Entities, HomeAssistant, publish_forever
 from .poller import Poller, fetch_stop_monitoring
+from .siri import decode_511
 from .setup import find_line, setup_report
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -146,6 +148,31 @@ async def find_line_endpoint(agency: str, line: str, q: str = ""):
     """Stops where a line is serving right now, e.g. ?agency=AC&line=O&q=salesforce"""
     p: Poller = app.state.poller
     return await find_line(p.cfg, p.client, p.limiter, agency, line, q)
+
+
+@app.get("/raw511")
+async def raw511(endpoint: str, request: Request, sample: int = 2):
+    """Debug: call a 511 transit endpoint and return its JSON, with every list
+    cut to `sample` items. For inspecting response shapes we don't parse yet.
+    e.g. /raw511?endpoint=stoptimetable&operatorref=AC&monitoringref=55537"""
+    if not re.fullmatch(r"[a-z]+", endpoint):
+        raise HTTPException(400, "endpoint must be a bare 511 transit path like 'stoptimetable'")
+    p: Poller = app.state.poller
+    if not p.limiter.try_acquire():
+        raise HTTPException(429, "rate budget exhausted")
+    params = {k: v for k, v in request.query_params.items() if k not in ("endpoint", "sample")}
+    r = await p.client.get(f"https://api.511.org/transit/{endpoint}",
+                           params={**params, "api_key": p.cfg.api_key, "format": "json"}, timeout=30)
+    if r.status_code != 200:
+        raise HTTPException(r.status_code, r.text[:500])
+
+    def trim(x):
+        if isinstance(x, list):
+            return {"_len": len(x), "items": [trim(i) for i in x[:sample]]}
+        if isinstance(x, dict):
+            return {k: trim(v) for k, v in x.items()}
+        return x
+    return trim(decode_511(r.content))
 
 
 @app.get("/peek")
