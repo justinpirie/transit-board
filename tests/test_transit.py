@@ -366,3 +366,24 @@ def test_short_lineref_used_for_display():
     opt = _option({"name": "O", "mode": "bus", "priority": 2, "agency": "AC", "stop": "1",
                    "lines": ["O"], "dest_match": ["Transit"]})
     assert opt.accepts(ac)
+
+
+async def test_fallback_never_sets_baseline_but_rescues():
+    p = Poller(make_cfg(), client=mock_511({
+        "FERRY": siri([dep("SEA", 25)]),          # ETA +55
+        "O": siri([dep("O", 10)]),                # ETA +58
+        "WOAK": siri([dep("Y", 25)]),             # Uber+BART: leave_in 2, ETA +38 (fastest)
+    }), clock=FakeClock(T0))
+    p.cfg.directions["to_office"][4] = _option({
+        "name": "Uber+BART", "mode": "bart", "priority": 4, "agency": "BA", "stop": "WOAK",
+        "travel_minutes": 20, "ride_minutes": 8, "egress_minutes": 5, "fallback": True})
+    await p.refresh("to_office")
+    r = p.plan("to_office")
+    # Uber is 17 min faster than the ferry (> 15 slack), but as a fallback it can't knock it out
+    assert r["options"][4]["next"]["leave_in"] == 2      # Uber IS catchable
+    assert r["recommended"]["option"] == "Ferry"
+
+    # Only the fallback makes the deadline → it's recommended, and says why
+    r = p.plan("to_office", datetime.fromtimestamp(T0, TZ) + timedelta(minutes=40))
+    assert r["recommended"]["option"] == "Uber+BART"
+    assert r["recommended"]["reason"] == "only the fallback arrives on time"

@@ -48,6 +48,7 @@ class Option:
     lines: tuple[str, ...] = ()       # allow-list on line name / LineRef
     dest_match: tuple[str, ...] = ()  # allow-list: substring of destination (case-insensitive)
     stop_query: str = ""              # words to find the stop by name (used by /setup)
+    fallback: bool = False            # last resort (e.g. Uber): never sets the "fastest" baseline
 
     @property
     def stop_key(self) -> str:
@@ -150,6 +151,7 @@ def _option(raw: dict) -> Option:
         lines=tuple(str(x) for x in d.get("lines", [])),
         dest_match=tuple(str(x) for x in d.get("dest_match", [])),
         stop_query=str(d.get("stop_query", "")),
+        fallback=bool(d.get("fallback", False)),
     )
 
 

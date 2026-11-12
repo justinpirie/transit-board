@@ -193,6 +193,7 @@ class Poller:
             for d in deps:
                 d["on_time"] = None if deadline is None else d["_eta_ts"] <= deadline
             options.append({"option": opt.name, "mode": opt.mode, "priority": opt.priority,
+                            "fallback": opt.fallback,
                             "next": deps[0] if deps else None,
                             "later": [d["leave_in"] for d in deps[1:3]]})
 
@@ -231,20 +232,28 @@ class Poller:
         if not live:
             return None, "no catchable departures"
         rank = lambda o: (o["priority"], o["next"]["_eta_ts"])
-        best_eta = min(o["next"]["_eta_ts"] for o in live)
+        # Fallback options (Uber) are a last resort: they're used only when no
+        # regular option works, and never set the "fastest" baseline. Otherwise
+        # a pricey Uber arriving first would knock the ferry out of the slack window.
+        primary = [o for o in live if not o.get("fallback")]
+        fallbacks = [o for o in live if o.get("fallback")]
 
         if deadline is not None:
-            on_time = [o for o in live if o["next"]["_eta_ts"] <= deadline]
-            if on_time:
-                pick = min(on_time, key=rank)
-                why = "preferred" if pick["priority"] == min(o["priority"] for o in options) \
-                    else "preferred options would be late"
-                return pick, why
+            for pool, why_pool in ((primary, None), (fallbacks, "only the fallback arrives on time")):
+                on_time = [o for o in pool if o["next"]["_eta_ts"] <= deadline]
+                if on_time:
+                    pick = min(on_time, key=rank)
+                    why = why_pool or ("preferred" if pick["priority"] == min(o["priority"] for o in options)
+                                       else "preferred options would be late")
+                    return pick, why
             pick = min(live, key=lambda o: o["next"]["_eta_ts"])
             late = int((pick["next"]["_eta_ts"] - deadline) // 60)
             return pick, f"running late: earliest arrival, ~{late} min after deadline"
 
-        pool = [o for o in live if o["next"]["_eta_ts"] <= best_eta + self.cfg.slack_minutes * 60]
+        if not primary:
+            return min(fallbacks, key=rank), "nothing else catchable"
+        best_eta = min(o["next"]["_eta_ts"] for o in primary)
+        pool = [o for o in primary if o["next"]["_eta_ts"] <= best_eta + self.cfg.slack_minutes * 60]
         pick = min(pool, key=rank)
         why = "preferred" if pick["priority"] == min(o["priority"] for o in options) \
             else f"preferred options arrive >{self.cfg.slack_minutes} min later or aren't catchable"

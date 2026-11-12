@@ -27,7 +27,7 @@ directions:
       stop: "TODO"
       stop_query: "seaplane"
       dest_match: ["San Francisco", "Ferry Building"]
-      travel_minutes: 8         # TODO: bike home → Seaplane Lagoon terminal
+      travel_minutes: 12        # bike
       ride_minutes: 20
       egress_minutes: 15        # Ferry Building → office on foot
 
@@ -69,6 +69,7 @@ directions:
     - name: Uber → West Oakland BART
       mode: bart
       priority: 4
+      fallback: true            # last resort: never the yardstick for 'fastest'
       agency: BA
       stop: "TODO"
       stop_query: "west oakland"
@@ -87,7 +88,7 @@ directions:
       dest_match: ["Seaplane", "Alameda"]
       travel_minutes: 15        # office → Ferry Building
       ride_minutes: 20
-      egress_minutes: 8         # TODO: bike terminal → home (same as morning)
+      egress_minutes: 12        # bike home
 
     - name: O bus
       mode: bus
@@ -125,6 +126,7 @@ directions:
     - name: BART → West Oakland + Uber
       mode: bart
       priority: 4
+      fallback: true
       agency: BA
       stop: "TODO"
       stop_query: "montgomery"
