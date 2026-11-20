@@ -145,8 +145,10 @@ async def build_plan(p: Poller, direction: str | None = None, at: str | None = N
 
     # Lazy refresh outside windows; inside, the background loop already did the work
     in_window = p.cfg.active_window(now) is not None
-    if p.should_poll(direction) or not in_window:
-        await p.refresh(direction, lazy=not in_window)
+    # Always keep departures available: polled in a commute window, otherwise
+    # refreshed lazily (at most every idle_ttl, 10 min). That includes days off
+    # and after you've left, when background polling is paused.
+    await p.refresh(direction, lazy=not (in_window and p.should_poll(direction)))
     await p.load_schedule(direction)
     return {**p.plan(direction, deadline), "direction_source": source}
 

@@ -880,3 +880,26 @@ async def test_leave_at_and_later_at_are_clock_times():
     o = next(x for x in p.plan("to_office")["options"] if x["option"] == "O bus")
     assert o["next"]["leave_at"][11:16] == "08:08" and o["next"]["leave_in"] == 7
     assert o["later_at"] == ["08:23", "08:38"]
+
+
+async def test_soonest_is_next_available_even_when_projection_differs():
+    # T0 = 08:00, target 09:30. O buses at +10 and +40 → projection is the later one
+    # (latest on-time), but "next available" is the +10 bus.
+    p = Poller(make_cfg(), clock=FakeClock(T0), client=mock_511({"O": siri([dep("O", 10), dep("O", 40)])}))
+    await p.refresh("to_office")
+    o = next(x for x in p.plan("to_office", datetime.fromtimestamp(T0, TZ) + timedelta(minutes=90))["options"]
+             if x["option"] == "O bus")
+    assert o["soonest"]["depart"][11:16] == "08:10" and o["soonest"]["leave_in"] == 3
+    assert o["next"]["depart"][11:16] == "08:40"
+    assert "_eta_ts" not in o["soonest"]                  # cleaned like `next`
+
+
+async def test_paused_polling_still_refreshes_lazily():
+    from transit_board.app import build_plan
+    clk, calls = FakeClock(T0), []                      # Tue 08:00, inside the morning window
+    p = Poller(make_cfg(idle_ttl_seconds=600), clock=clk, client=mock_511({"O": siri([dep("O", 20)])}, calls))
+    r = await build_plan(p, at="not_home")              # left home → background polling paused
+    assert r["polling_paused"] and len(calls) == 5      # …but the plan still got fresh data
+    calls.clear()
+    await build_plan(p, at="not_home")
+    assert calls == []                                  # and stays within the 10-min idle TTL

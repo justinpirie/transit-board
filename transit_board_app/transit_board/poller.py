@@ -236,6 +236,9 @@ class Poller:
             options.append({"option": opt.name, "mode": opt.mode, "priority": opt.priority,
                             "fallback": opt.fallback, "always_prefer": opt.always_prefer,
                             "next": deps[pick_i] if deps else None,
+                            # Soonest catchable departure, whatever the target: the dashboard's
+                            # "next available" column. `next` above is the projection.
+                            "soonest": deps[0] if deps else None,
                             "later": [d["leave_in"] for d in deps[pick_i + 1:pick_i + 3]],
                             # Same departures as clock times to leave ("08:12"), for display
                             "later_at": [d["leave_at"][11:16] for d in deps[pick_i + 1:pick_i + 3]]})
@@ -247,6 +250,7 @@ class Poller:
         clean = lambda d: d and {k: v for k, v in d.items() if not k.startswith("_")}
         for o in options:
             o["next"] = clean(o["next"])
+            o["soonest"] = clean(o["soonest"])
         age = None if oldest is None else int(now - oldest)
         return {
             "direction": direction,
