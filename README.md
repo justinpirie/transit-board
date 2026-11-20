@@ -43,7 +43,7 @@ The app writes `sensor.commute_leave_in` every 60 s:
 ### Per option
 - **`soonest`:** the next available departure you can still catch, whatever the target. This is the dashboard's "Next available" column.
 - **`next`:** the projection, i.e. the latest departure that still meets the target (`arrive_by`, from your calendar or the defaults). With no target it's the same as `soonest`.
-- **`later_at`:** the leave times (`HH:MM`) for the departures after `next`.
+- **`later_at`:** leave times (`HH:MM`) for the next 3 departures after `next`. This is the dashboard's "Then" column.
 
 Each departure includes `leave_in` (minutes), `leave_at`, `depart`, `eta`, `realtime` and `on_time`. Departures beyond 511's ~1 h live
 window come from the GTFS timetable (`realtime: false`). Data refreshes every 10 min even while polling is paused, so it's always

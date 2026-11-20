@@ -32,11 +32,11 @@ views:
 
         {% set ab = state_attr(s, 'arrive_by') %}🎯 Projection: {{ ('arrive by ' ~ ab[11:16]) if ab else 'no target, next departure' }}
 
-        | Option | Next available | 🎯 Leave | 🎯 Departs | 🎯 Arrive |
-        |:--|:--|:-:|:-:|:-:|
+        | Option | Next available | 🎯 Leave | 🎯 Departs | 🎯 Arrive | Then |
+        |:--|:--|:-:|:-:|:-:|:--|
         {% for o in state_attr(s, 'options') or [] -%}
         {%- set n = o.next -%}{%- set a = o.soonest -%}
-        | {{ icons.get(o.mode, '') }} {{ ('_' ~ o.option ~ '_') if o.fallback else o.option }} | {% if a %}{{ a.depart[11:16] }}{{ '' if a.realtime else ' 🕒' }} · {{ 'now' if a.leave_in == 0 else (a.leave_in ~ ' min') }}{% else %}—{% endif %} | {{ n.leave_at[11:16] if n and n.leave_at else '' }} | {{ n.depart[11:16] if n else '' }} | {{ n.eta[11:16] if n else '' }}{{ ' ⚠️' if n and n.on_time == false else '' }} |
+        | {{ icons.get(o.mode, '') }} {{ ('_' ~ o.option ~ '_') if o.fallback else o.option }} | {% if a %}{{ a.depart[11:16] }}{{ '' if a.realtime else ' 🕒' }} · {{ 'now' if a.leave_in == 0 else (a.leave_in ~ ' min') }}{% else %}—{% endif %} | {{ n.leave_at[11:16] if n and n.leave_at else '' }} | {{ n.depart[11:16] if n else '' }} | {{ n.eta[11:16] if n else '' }}{{ ' ⚠️' if n and n.on_time == false else '' }} | {{ (o.later_at or []) | join(', ') }} |
         {% endfor %}
     - type: tile
       entity: input_boolean.commute_today
