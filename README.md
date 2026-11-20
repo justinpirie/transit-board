@@ -37,8 +37,17 @@ Then:
 
 The app writes `sensor.commute_leave_in` every 60 s:
 - **State:** minutes until you must leave for the recommended option, or `unavailable`.
-- **Attributes:** `recommended`, `backup`, `options` (each with `next`, which includes `leave_at`, and `later_at`, the next leave times as `HH:MM`), `direction`, `commute_today`, `arrive_by`, `stale`,
+- **Attributes:** `recommended`, `backup`, `options`, `direction`, `commute_today`, `arrive_by`, `stale`,
   `polling_paused`, and `calendar` (`reason`, `holiday`, `first_in_person`).
+
+### Per option
+- **`soonest`:** the next available departure you can still catch, whatever the target. This is the dashboard's "Next available" column.
+- **`next`:** the projection, i.e. the latest departure that still meets the target (`arrive_by`, from your calendar or the defaults). With no target it's the same as `soonest`.
+- **`later_at`:** the leave times (`HH:MM`) for the departures after `next`.
+
+Each departure includes `leave_in` (minutes), `leave_at`, `depart`, `eta`, `realtime` and `on_time`. Departures beyond 511's ~1 h live
+window come from the GTFS timetable (`realtime: false`). Data refreshes every 10 min even while polling is paused, so it's always
+available.
 
 ### Night before: `sensor.commute_tomorrow`
 511's live feed only covers about the next hour, and its StopTimetable API only works for
