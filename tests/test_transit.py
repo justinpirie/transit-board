@@ -903,3 +903,17 @@ async def test_paused_polling_still_refreshes_lazily():
     calls.clear()
     await build_plan(p, at="not_home")
     assert calls == []                                  # and stays within the 10-min idle TTL
+
+
+async def test_then_is_next_three_after_the_projection():
+    # T0 = 08:00, target 09:30. O buses every 10 min from 08:10; ETA = departure + 48 min
+    # (40 ride + 8 walk), so 08:40 is the latest on time. "Then" = the 3 after it, as leave
+    # times (departure − 5 travel − 2 buffer).
+    p = Poller(make_cfg(), clock=FakeClock(T0),
+               client=mock_511({"O": siri([dep("O", m) for m in (10, 20, 30, 40, 50, 60, 70, 80)])}))
+    await p.refresh("to_office")
+    o = next(x for x in p.plan("to_office", datetime.fromtimestamp(T0, TZ) + timedelta(minutes=90))["options"]
+             if x["option"] == "O bus")
+    assert o["next"]["depart"][11:16] == "08:40"                       # projection: latest on time
+    assert o["later_at"] == ["08:43", "08:53", "09:03"]                # the 3 after it (leave times)
+    assert len(o["later"]) == 3

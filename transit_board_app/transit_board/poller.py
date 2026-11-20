@@ -239,9 +239,10 @@ class Poller:
                             # Soonest catchable departure, whatever the target: the dashboard's
                             # "next available" column. `next` above is the projection.
                             "soonest": deps[0] if deps else None,
-                            "later": [d["leave_in"] for d in deps[pick_i + 1:pick_i + 3]],
-                            # Same departures as clock times to leave ("08:12"), for display
-                            "later_at": [d["leave_at"][11:16] for d in deps[pick_i + 1:pick_i + 3]]})
+                            "later": [d["leave_in"] for d in deps[pick_i + 1:pick_i + 4]],
+                            # The next 3 after the projected departure, as clock times to leave
+                            # ("08:12"): the dashboard's "Then" column
+                            "later_at": [d["leave_at"][11:16] for d in deps[pick_i + 1:pick_i + 4]]})
 
         rec, reason = self._recommend(options, deadline)
         # Backup = what the same logic would pick if the recommendation vanished
